@@ -1,0 +1,6 @@
+{
+  "name": "SpotiOffline",
+  "description": "Pixel-perfect offline music player with synced lyrics, fast device audio scanner, and high-res album art.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

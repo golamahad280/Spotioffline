@@ -3,12 +3,14 @@ package com.example.playback
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.example.MainActivity
@@ -27,10 +29,14 @@ class MusicPlaybackService : MediaSessionService() {
     private var instance: MusicPlaybackService? = null
     fun getInstance(): MusicPlaybackService? = instance
 
-    fun startOrUpdate(context: Context, song: com.example.data.model.Song, isPlaying: Boolean) {
+    fun startOrUpdate(context: Context, song: com.example.data.model.Song?, isPlaying: Boolean) {
       val intent = Intent(context, MusicPlaybackService::class.java)
       try {
-        context.startService(intent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          context.startForegroundService(intent)
+        } else {
+          context.startService(intent)
+        }
       } catch (_: Exception) {}
     }
   }
@@ -52,32 +58,6 @@ class MusicPlaybackService : MediaSessionService() {
       .setHandleAudioBecomingNoisy(true)
       .build()
 
-    player.addListener(object : Player.Listener {
-      override fun onIsPlayingChanged(isPlaying: Boolean) {
-        if (isPlaying) {
-          cancelIdleTimeout()
-          cancelQueueEndTimeout()
-        } else {
-          if (player.playbackState == Player.STATE_ENDED) {
-            scheduleQueueEndTimeout()
-          } else {
-            scheduleIdleTimeout()
-          }
-          try {
-            stopForeground(false)
-          } catch (_: Exception) {}
-        }
-      }
-
-      override fun onPlaybackStateChanged(playbackState: Int) {
-        if (playbackState == Player.STATE_ENDED) {
-          if (!player.isPlaying) {
-            scheduleQueueEndTimeout()
-          }
-        }
-      }
-    })
-
     val intent = Intent(this, MainActivity::class.java).apply {
       flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
     }
@@ -91,14 +71,20 @@ class MusicPlaybackService : MediaSessionService() {
     mediaSession = MediaSession.Builder(this, player)
       .setSessionActivity(pendingIntent)
       .build()
+
+    addSession(mediaSession!!)
+
+    val notificationProvider = DefaultMediaNotificationProvider.Builder(this).build().apply {
+      setSmallIcon(android.R.drawable.ic_media_play)
+    }
+    setMediaNotificationProvider(notificationProvider)
   }
 
   override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
   override fun onTaskRemoved(rootIntent: Intent?) {
     super.onTaskRemoved(rootIntent)
-    val isPlaying = player.isPlaying
-    if (!isPlaying) {
+    if (!player.isPlaying && !player.playWhenReady) {
       try {
         player.pause()
         stopForeground(STOP_FOREGROUND_REMOVE)

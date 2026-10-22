@@ -35,10 +35,10 @@ class PlaybackManager(
   private val scope: CoroutineScope
 ) {
 
-  private var exoPlayer: ExoPlayer? = null
   private var equalizer: Equalizer? = null
   private var positionUpdateJob: Job? = null
   private var sleepTimer: CountDownTimer? = null
+  private var playerListenerAttached = false
 
   private val _currentSong = MutableStateFlow<Song?>(null)
   val currentSong: StateFlow<Song?> = _currentSong.asStateFlow()
@@ -79,6 +79,7 @@ class PlaybackManager(
   val availablePresets = listOf("Flat", "Bass Boost", "Vocal Boost", "Rock", "Pop", "Electronic", "Jazz")
 
   init {
+    ensurePlayerListener()
     startPositionTicker()
   }
 
@@ -88,14 +89,50 @@ class PlaybackManager(
       android.util.Log.d("PlaybackManager", "PLAYER INSTANCES: 1")
       return servicePlayer
     }
-    // Start service to initialize the single ExoPlayer instance
-    MusicPlaybackService.startOrUpdate(context, _currentSong.value ?: Song("", "", "", "", 0L, ""), true)
+    MusicPlaybackService.startOrUpdate(context, _currentSong.value, true)
+    var attempts = 0
+    while (MusicPlaybackService.getInstance()?.player == null && attempts < 15) {
+      try {
+        Thread.sleep(50)
+      } catch (_: Exception) {}
+      attempts++
+    }
     val startedPlayer = MusicPlaybackService.getInstance()?.player
     if (startedPlayer != null) {
       android.util.Log.d("PlaybackManager", "PLAYER INSTANCES: 1")
       return startedPlayer
     }
     throw IllegalStateException("MusicPlaybackService player not initialized")
+  }
+
+  private fun ensurePlayerListener() {
+    try {
+      val player = getOrCreatePlayer()
+      if (!playerListenerAttached) {
+        player.addListener(object : Player.Listener {
+          override fun onIsPlayingChanged(isPlaying: Boolean) {
+            _isPlaying.value = isPlaying
+          }
+
+          override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_ENDED) {
+              handleTrackCompletion()
+            }
+          }
+
+          override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            try {
+              val currentIdx = getOrCreatePlayer().currentMediaItemIndex
+              if (currentIdx in _queue.value.indices) {
+                _queueIndex.value = currentIdx
+                _currentSong.value = _queue.value[currentIdx]
+              }
+            } catch (_: Exception) {}
+          }
+        })
+        playerListenerAttached = true
+      }
+    } catch (_: Exception) {}
   }
 
   fun playSong(song: Song, contextQueue: List<Song> = emptyList()) {
@@ -123,36 +160,38 @@ class PlaybackManager(
     _currentSong.value = song
 
     try {
+      ensurePlayerListener()
       val player = getOrCreatePlayer()
       player.stop()
       player.clearMediaItems()
 
-      val displayArtist = if (song.artist.isBlank() || song.artist.equals("Unknown Artist", ignoreCase = true) || song.artist.equals("<unknown>", ignoreCase = true)) {
-        "SpotiOffline"
-      } else {
-        song.artist
+      val mediaItems = list.map { s ->
+        val displayArtist = if (s.artist.isBlank() || s.artist.equals("Unknown Artist", ignoreCase = true) || s.artist.equals("<unknown>", ignoreCase = true)) {
+          "SpotiOffline"
+        } else {
+          s.artist
+        }
+
+        val mediaMetadata = MediaMetadata.Builder()
+          .setTitle(s.title)
+          .setArtist(displayArtist)
+          .setAlbumTitle(s.album)
+          .setArtworkUri(if (!s.albumArtUri.isNullOrBlank()) Uri.parse(s.albumArtUri) else null)
+          .build()
+
+        MediaItem.Builder()
+          .setUri(Uri.parse(s.uriString))
+          .setMediaId(s.id)
+          .setMediaMetadata(mediaMetadata)
+          .build()
       }
 
-      val mediaMetadata = MediaMetadata.Builder()
-        .setTitle(song.title)
-        .setArtist(displayArtist)
-        .setAlbumTitle(song.album)
-        .setArtworkUri(if (!song.albumArtUri.isNullOrBlank()) Uri.parse(song.albumArtUri) else null)
-        .build()
-
-      val mediaItem = MediaItem.Builder()
-        .setUri(Uri.parse(song.uriString))
-        .setMediaId(song.id)
-        .setMediaMetadata(mediaMetadata)
-        .build()
-
-      player.setMediaItem(mediaItem)
+      player.setMediaItems(mediaItems, idx, 0L)
       player.prepare()
       player.play()
 
       setupEqualizer()
 
-      _isPlaying.value = true
       _durationMs.value = player.duration.let { if (it > 0) it else song.durationMs }
       _currentPositionMs.value = 0L
 
@@ -169,7 +208,6 @@ class PlaybackManager(
   fun updateCurrentSong(song: Song) {
     if (_currentSong.value?.id == song.id) {
       _currentSong.value = song
-      // Also update player media metadata if active
       try {
         val player = getOrCreatePlayer()
         val displayArtist = if (song.artist.isBlank() || song.artist.equals("Unknown Artist", ignoreCase = true) || song.artist.equals("<unknown>", ignoreCase = true)) {
@@ -183,7 +221,6 @@ class PlaybackManager(
           .setAlbumTitle(song.album)
           .setArtworkUri(if (!song.albumArtUri.isNullOrBlank()) Uri.parse(song.albumArtUri) else null)
           .build()
-        // If current media item matches, update metadata
         if (player.currentMediaItem?.mediaId == song.id) {
           player.replaceMediaItem(
             player.currentMediaItemIndex,
@@ -205,10 +242,11 @@ class PlaybackManager(
   private fun handleTrackCompletion() {
     when (_repeatMode.value) {
       RepeatMode.ONE -> {
-        val player = getOrCreatePlayer()
-        player.seekTo(0)
-        player.play()
-        _isPlaying.value = true
+        try {
+          val player = getOrCreatePlayer()
+          player.seekTo(0)
+          player.play()
+        } catch (_: Exception) {}
       }
       RepeatMode.ALL -> {
         next()
@@ -226,54 +264,76 @@ class PlaybackManager(
   }
 
   fun togglePlayPause() {
-    val player = getOrCreatePlayer()
-    if (_currentSong.value == null) {
-      return
-    }
+    try {
+      ensurePlayerListener()
+      val player = getOrCreatePlayer()
+      if (_currentSong.value == null) {
+        return
+      }
 
-    if (player.isPlaying) {
-      player.pause()
-      _isPlaying.value = false
-      _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = false) }
-    } else {
-      if (player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) {
-        playCurrentQueueItem()
+      if (player.isPlaying) {
+        player.pause()
+        _isPlaying.value = false
+        _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = false) }
       } else {
+        if (player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) {
+          playCurrentQueueItem()
+        } else {
+          player.play()
+          _isPlaying.value = true
+          _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = true) }
+        }
+      }
+    } catch (_: Exception) {}
+  }
+
+  fun next() {
+    try {
+      ensurePlayerListener()
+      val player = getOrCreatePlayer()
+      if (player.hasNextMediaItem()) {
+        player.seekToNextMediaItem()
         player.play()
-        _isPlaying.value = true
-        _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = true) }
+      } else {
+        val list = _queue.value
+        if (list.isEmpty()) return
+        val nextIdx = if (_shuffleEnabled.value) {
+          (list.indices).random()
+        } else {
+          (_queueIndex.value + 1) % list.size
+        }
+        _queueIndex.value = nextIdx
+        playCurrentQueueItem()
+      }
+    } catch (_: Exception) {
+      val list = _queue.value
+      if (list.isNotEmpty()) {
+        _queueIndex.value = (_queueIndex.value + 1) % list.size
+        playCurrentQueueItem()
       }
     }
   }
 
-  fun next() {
-    val list = _queue.value
-    if (list.isEmpty()) return
-
-    val nextIdx = if (_shuffleEnabled.value) {
-      (list.indices).random()
-    } else {
-      (_queueIndex.value + 1) % list.size
-    }
-
-    _queueIndex.value = nextIdx
-    playCurrentQueueItem()
-  }
-
   fun previous() {
-    val player = getOrCreatePlayer()
-    if (player.currentPosition > 3000) {
-      player.seekTo(0)
-      _currentPositionMs.value = 0L
-      return
-    }
-
-    val list = _queue.value
-    if (list.isEmpty()) return
-
-    val prevIdx = if (_queueIndex.value - 1 < 0) list.size - 1 else _queueIndex.value - 1
-    _queueIndex.value = prevIdx
-    playCurrentQueueItem()
+    try {
+      ensurePlayerListener()
+      val player = getOrCreatePlayer()
+      if (player.currentPosition > 3000) {
+        player.seekTo(0)
+        _currentPositionMs.value = 0L
+        return
+      }
+      if (player.hasPreviousMediaItem()) {
+        player.seekToPreviousMediaItem()
+        player.play()
+      } else {
+        val list = _queue.value
+        if (list.isEmpty()) return
+        val prevIdx = if (_queueIndex.value - 1 < 0) list.size - 1 else _queueIndex.value - 1
+        _queueIndex.value = prevIdx
+        playCurrentQueueItem()
+      }
+    } catch (_: Exception) {}
   }
 
   fun seekTo(positionMs: Long) {
@@ -445,7 +505,6 @@ class PlaybackManager(
     sleepTimer?.cancel()
     try {
       equalizer?.release()
-      exoPlayer?.release()
     } catch (_: Exception) {}
   }
 }

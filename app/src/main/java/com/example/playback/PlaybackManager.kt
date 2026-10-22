@@ -426,7 +426,7 @@ class PlaybackManager(
     positionUpdateJob?.cancel()
     positionUpdateJob = scope.launch(Dispatchers.Main) {
       while (isActive) {
-        val player = exoPlayer
+        val player = MusicPlaybackService.getInstance()?.player
         if (player != null && _isPlaying.value) {
           try {
             _currentPositionMs.value = player.currentPosition

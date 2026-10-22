@@ -30,11 +30,7 @@ class MusicPlaybackService : MediaSessionService() {
     fun startOrUpdate(context: Context, song: com.example.data.model.Song, isPlaying: Boolean) {
       val intent = Intent(context, MusicPlaybackService::class.java)
       try {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-          context.startForegroundService(intent)
-        } else {
-          context.startService(intent)
-        }
+        context.startService(intent)
       } catch (_: Exception) {}
     }
   }

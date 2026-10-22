@@ -1,0 +1,15 @@
+{
+  "name": "offline-music-player",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Offline Music Player with Synced Lyrics and Spotify aesthetic",
+  "scripts": {
+    "build:apk": "gradle :app:assembleDebug && mkdir -p APK_HERE && cp app/build/outputs/apk/debug/app-debug.apk APK_HERE/OfflineMusic.apk",
+    "build:apk:release": "gradle :app:assembleRelease && mkdir -p APK_HERE && cp app/build/outputs/apk/release/*.apk APK_HERE/OfflineMusic.apk 2>/dev/null || true"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/cli": "^6.0.0",
+    "@capacitor/core": "^6.0.0"
+  }
+}

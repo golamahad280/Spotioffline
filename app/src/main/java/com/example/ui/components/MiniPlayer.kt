@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,6 +49,7 @@ fun MiniPlayer(
   currentPositionMs: Long,
   durationMs: Long,
   onPlayPauseClick: () -> Unit,
+  onNextClick: () -> Unit,
   onLikeClick: () -> Unit,
   onClick: () -> Unit,
   modifier: Modifier = Modifier
@@ -134,6 +136,21 @@ fun MiniPlayer(
             contentDescription = if (song.isLiked) "Unlike" else "Like",
             tint = if (song.isLiked) SpotifyRedHeart else SpotifyTextSecondary,
             modifier = Modifier.size(22.dp)
+          )
+        }
+
+        // Next Button
+        IconButton(
+          onClick = onNextClick,
+          modifier = Modifier
+            .size(40.dp)
+            .testTag("mini_player_next")
+        ) {
+          Icon(
+            imageVector = Icons.Default.SkipNext,
+            contentDescription = "Next",
+            tint = SpotifyWhite,
+            modifier = Modifier.size(24.dp)
           )
         }
 

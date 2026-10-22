@@ -273,6 +273,7 @@ fun MainAppContent(viewModel: MusicViewModel) {
           currentPositionMs = currentPositionMs,
           durationMs = durationMs,
           onPlayPauseClick = { viewModel.togglePlayPause() },
+          onNextClick = { viewModel.next() },
           onLikeClick = { currentSong?.let { viewModel.toggleLike(it) } },
           onClick = { viewModel.openNowPlaying() }
         )

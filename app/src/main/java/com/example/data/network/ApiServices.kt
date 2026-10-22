@@ -29,6 +29,6 @@ interface ITunesService {
   suspend fun searchSong(
     @Query("term") term: String,
     @Query("entity") entity: String = "song",
-    @Query("limit") limit: Int = 1
+    @Query("limit") limit: Int = 5
   ): retrofit2.Response<ITunesSearchResult>
 }

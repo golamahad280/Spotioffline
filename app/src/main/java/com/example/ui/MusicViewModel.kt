@@ -218,10 +218,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun openLyricsDebug() {
+    currentSong.value?.let {
+      lyricsPipeline.setInspectSongId(it.id)
+    }
     _isLyricsDebugOpen.value = true
   }
 
   fun closeLyricsDebug() {
+    lyricsPipeline.activeDebugSongId = null
     _isLyricsDebugOpen.value = false
   }
 
@@ -229,8 +233,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     return lyricsPipeline.runSelfTest()
   }
 
+  suspend fun runSetFireToTheRainTest(): Pair<Boolean, com.example.data.lyrics.LyricsDebugInfo> {
+    return lyricsPipeline.runSetFireToTheRainTest()
+  }
+
   fun fetchLyricsForSong(song: Song, force: Boolean = true) {
     viewModelScope.launch(Dispatchers.IO) {
+      lyricsPipeline.setInspectSongId(song.id)
       val success = lyricsPipeline.fetchLyricsForSong(song, force = force)
       if (success) {
         playbackManager.refreshCurrentSongFromDb()

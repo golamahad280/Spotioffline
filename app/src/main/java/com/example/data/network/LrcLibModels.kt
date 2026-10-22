@@ -26,5 +26,6 @@ data class ITunesTrack(
   @Json(name = "trackName") val trackName: String? = null,
   @Json(name = "artistName") val artistName: String? = null,
   @Json(name = "collectionName") val collectionName: String? = null,
-  @Json(name = "artworkUrl100") val artworkUrl100: String? = null
+  @Json(name = "artworkUrl100") val artworkUrl100: String? = null,
+  @Json(name = "trackTimeMillis") val trackTimeMillis: Long? = null
 )

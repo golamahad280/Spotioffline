@@ -394,6 +394,7 @@ fun MainAppContent(viewModel: MusicViewModel) {
         debugInfo = lyricsDebugInfo,
         onRetryFetch = { song -> viewModel.fetchLyricsForSong(song, force = true) },
         onRunSelfTest = { viewModel.runLyricsSelfTest() },
+        onRunSetFireToTheRainTest = { viewModel.runSetFireToTheRainTest() },
         onDismiss = { viewModel.closeLyricsDebug() }
       )
     }

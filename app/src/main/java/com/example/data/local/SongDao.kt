@@ -61,10 +61,13 @@ interface SongDao {
   @Query("UPDATE songs SET lyricsStatus = 'NOT_FOUND', lyricsFetchedAt = :fetchedAt, lyricsError = :error WHERE id = :songId")
   suspend fun updateLyricsNotFound(songId: String, fetchedAt: Long, error: String)
 
+  @Query("UPDATE songs SET lyricsStatus = :status, lyricsFetchedAt = :fetchedAt, lyricsError = :error WHERE id = :songId")
+  suspend fun updateLyricsStatus(songId: String, status: String, fetchedAt: Long, error: String)
+
   @Query("UPDATE songs SET lyricsStatus = 'FETCHING' WHERE id = :songId")
   suspend fun setLyricsFetching(songId: String)
 
-  @Query("SELECT * FROM songs WHERE hasLyrics = 0 AND (lyricsStatus != 'NOT_FOUND' OR (:now - lyricsFetchedAt) > 604800000)")
+  @Query("SELECT * FROM songs WHERE hasLyrics = 0 AND lyricsStatus != 'SKIPPED_SHORT_AUDIO' AND ((lyricsStatus = 'ERROR' AND (:now - lyricsFetchedAt) > 3600000) OR (lyricsStatus = 'NOT_FOUND' AND (:now - lyricsFetchedAt) > 604800000) OR (lyricsStatus NOT IN ('ERROR', 'NOT_FOUND', 'SKIPPED_SHORT_AUDIO')))")
   suspend fun getSongsNeedingLyrics(now: Long = System.currentTimeMillis()): List<Song>
 
   @Query("UPDATE songs SET lyricsText = :lyrics, hasLyrics = 1, isSyncedLyrics = :isSynced, lyricsStatus = 'READY' WHERE id = :songId")

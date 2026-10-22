@@ -83,22 +83,19 @@ class PlaybackManager(
   }
 
   private fun getOrCreatePlayer(): ExoPlayer {
-    val existingServicePlayer = MusicPlaybackService.getInstance()?.player
-    if (existingServicePlayer != null) {
-      exoPlayer = existingServicePlayer
-      return existingServicePlayer
+    val servicePlayer = MusicPlaybackService.getInstance()?.player
+    if (servicePlayer != null) {
+      android.util.Log.d("PlaybackManager", "PLAYER INSTANCES: 1")
+      return servicePlayer
     }
-    val player = exoPlayer ?: ExoPlayer.Builder(context).build().also { p ->
-      p.addListener(object : Player.Listener {
-        override fun onPlaybackStateChanged(playbackState: Int) {
-          if (playbackState == Player.STATE_ENDED) {
-            handleTrackCompletion()
-          }
-        }
-      })
-      exoPlayer = p
+    // Start service to initialize the single ExoPlayer instance
+    MusicPlaybackService.startOrUpdate(context, _currentSong.value ?: Song("", "", "", "", 0L, ""), true)
+    val startedPlayer = MusicPlaybackService.getInstance()?.player
+    if (startedPlayer != null) {
+      android.util.Log.d("PlaybackManager", "PLAYER INSTANCES: 1")
+      return startedPlayer
     }
-    return player
+    throw IllegalStateException("MusicPlaybackService player not initialized")
   }
 
   fun playSong(song: Song, contextQueue: List<Song> = emptyList()) {

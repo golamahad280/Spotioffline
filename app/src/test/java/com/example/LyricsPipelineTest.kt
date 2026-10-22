@@ -67,6 +67,13 @@ class LyricsPipelineTest {
   }
 
   @Test
+  fun `cleanFilenameOrTitle cleans Bengali YouTube filename correctly`() {
+    val raw = "আমার_ভিতর_বাহিরে___সোমলতা_আচার্য্য_চৌধুরী___Lyrical_Video___Somlata_and_The_Aces(128k)"
+    val cleaned = pipeline.cleanFilenameOrTitle(raw)
+    assertEquals("আমার ভিতর বাহিরে", cleaned)
+  }
+
+  @Test
   fun `isGenericOrFolderMetadata detects generic artists and folder names`() {
     assertTrue(pipeline.isGenericOrFolderMetadata("Unknown Artist"))
     assertTrue(pipeline.isGenericOrFolderMetadata("<unknown>"))

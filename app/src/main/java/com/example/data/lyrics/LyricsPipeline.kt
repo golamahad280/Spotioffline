@@ -758,44 +758,50 @@ class LyricsPipeline(
   }
 
   fun cleanFilenameOrTitle(raw: String): String {
-    var s = raw.trim()
-    // 1. Replace underscores with spaces
-    s = s.replace('_', ' ')
-
-    // 2. Remove file extensions (.mp3, .m4a, .flac, .wav, .aac, .ogg, .opus, etc.)
+    var s = java.text.Normalizer.normalize(raw.trim(), java.text.Normalizer.Form.NFC)
+    // Remove file extensions
     s = s.replace(Regex("\\.(mp3|m4a|flac|wav|aac|ogg|opus|wma)$", RegexOption.IGNORE_CASE), "")
 
-    // 3. Remove bitrates like (128k), [128k], 128k, (320kbps), [320kbps], 320kbps
-    s = s.replace(Regex("(?i)[\\(\\[]?\\s*\\b\\d{2,4}\\s*(k|kbps|kb/s)\\b\\s*[\\)\\]]?"), " ")
+    // Split into segments using separators: runs of 2+ underscores ("___"), " | ", " - ", " – ", " — ", " // "
+    val segments = s.split(Regex("___|\\s+[-–—|/]+\\s+"))
+    val cleanedSegments = mutableListOf<String>()
 
-    // 4. Remove official video, lyrics, remastered, audio, visualizer tags in parentheses or brackets
-    val tagPatterns = listOf(
-      Regex("(?i)\\[.*?(official|video|audio|lyrics?|remaster|visualizer|live|clip|hq|hd|explicit).*?\\]"),
-      Regex("(?i)\\(.*?(official|video|audio|lyrics?|remaster|visualizer|live|clip|hq|hd|explicit).*?\\)"),
-      Regex("(?i)-?\\s*Remaster(ed)?(\\s*\\d{4})?"),
-      Regex("(?i)-?\\s*Live(\\s*at.*)?")
+    val junkTerms = setOf(
+      "lyrical video", "lyric video", "official video", "official audio", "official music video",
+      "full video", "full song", "audio", "video", "hd", "4k", "lyrics", "karaoke", "cover", "live",
+      "128k", "192k", "320k", "kbps"
     )
-    for (p in tagPatterns) {
-      s = s.replace(p, " ")
+
+    for (seg in segments) {
+      var cs = seg.replace('_', ' ')
+      // Remove bitrate patterns
+      cs = cs.replace(Regex("(?i)[\\(\\[]?\\s*\\b\\d{2,4}\\s*(k|kbps|kb/s)\\b\\s*[\\)\\]]?"), " ")
+      // Remove tags in parentheses/brackets
+      cs = cs.replace(Regex("(?i)\\[.*?(official|video|audio|lyrics?|remaster|visualizer|live|clip|hq|hd|explicit).*?\\]"), " ")
+      cs = cs.replace(Regex("(?i)\\(.*?(official|video|audio|lyrics?|remaster|visualizer|live|clip|hq|hd|explicit).*?\\)"), " ")
+      cs = cs.replace(Regex("(?i)-?\\s*Remaster(ed)?(\\s*\\d{4})?"), " ")
+      cs = cs.replace(Regex("(?i)-?\\s*Live(\\s*at.*)?"), " ")
+      cs = cs.replace(Regex("(?i)\\b(feat|ft)\\.?\\s+.*"), "")
+      cs = cs.replace(Regex("\\(\\s*\\)"), " ")
+      cs = cs.replace(Regex("\\[\\s*\\]"), " ")
+      cs = cs.replace(Regex("(?i)\\[?(www\\.[a-z0-9.\\-_]+|[a-z0-9_\\-]+\\.(com|net|org|io|ru|co|info|cc))\\]?"), " ")
+      cs = cs.replace(Regex("^\\s*\\d{1,3}\\s*[-._\\s]\\s*"), "")
+      cs = cs.replace(Regex("\\s+"), " ").trim()
+
+      if (cs.isNotBlank() && !junkTerms.contains(cs.lowercase()) && !cs.matches(Regex("^\\d{1,3}$"))) {
+        cleanedSegments.add(cs)
+      }
     }
 
-    // Clean any empty parentheses or brackets left over
-    s = s.replace(Regex("\\(\\s*\\)"), " ")
-    s = s.replace(Regex("\\[\\s*\\]"), " ")
+    if (cleanedSegments.isNotEmpty()) {
+      // Return the first meaningful segment as title (or join if multi-part title)
+      return cleanedSegments.first()
+    }
 
-    // 5. Remove website watermarks or domain names
-    s = s.replace(Regex("(?i)\\[?(www\\.[a-z0-9.\\-_]+|[a-z0-9_\\-]+\\.(com|net|org|io|ru|co|info|cc))\\]?"), " ")
-    s = s.replace(Regex("(?i)\\[?(ytmp3|y2mate|mp3juice|tubidy|savefrom)\\]?"), " ")
-
-    // 6. Remove leading track numbers e.g. "01 - ", "01. ", "1 - ", "01 "
-    s = s.replace(Regex("^\\s*\\d{1,3}\\s*[-._\\s]\\s*"), "")
-
-    // 7. Remove "feat." or "ft."
-    s = s.replace(Regex("(?i)\\b(feat|ft)\\.?\\s+.*"), "")
-
-    // 8. Collapse spaces
+    // Fallback standard cleanup
+    s = s.replace('_', ' ')
+    s = s.replace(Regex("(?i)[\\(\\[]?\\s*\\b\\d{2,4}\\s*(k|kbps|kb/s)\\b\\s*[\\)\\]]?"), " ")
     s = s.replace(Regex("\\s+"), " ").trim()
-
     return s.ifBlank { raw.trim() }
   }
 

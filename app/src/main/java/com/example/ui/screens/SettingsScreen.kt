@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -71,10 +72,11 @@ fun SettingsScreen(
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
+  val prefs = remember { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
   var autoFetchLyrics by remember { mutableStateOf(true) }
   var autoFetchCovers by remember { mutableStateOf(true) }
   var crossfadeEnabled by remember { mutableStateOf(false) }
-  var customGeminiKey by remember { mutableStateOf("") }
+  var customGeminiKey by remember { mutableStateOf(prefs.getString("gemini_api_key", "") ?: "") }
   var keyTestStatus by remember { mutableStateOf<String?>(null) }
 
   LazyColumn(
@@ -210,7 +212,10 @@ fun SettingsScreen(
           Spacer(modifier = Modifier.height(4.dp))
           OutlinedTextField(
             value = customGeminiKey,
-            onValueChange = { customGeminiKey = it },
+            onValueChange = { 
+              customGeminiKey = it
+              prefs.edit().putString("gemini_api_key", it).apply()
+            },
             placeholder = { Text("Configure in AI Studio Secrets panel", fontSize = 12.sp) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()

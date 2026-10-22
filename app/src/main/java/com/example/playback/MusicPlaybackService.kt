@@ -42,6 +42,7 @@ class MusicPlaybackService : MediaSessionService() {
   override fun onCreate() {
     super.onCreate()
     instance = this
+    android.util.Log.d("MusicPlaybackService", "PLAYER INSTANCES: 1")
 
     player = ExoPlayer.Builder(this)
       .setAudioAttributes(

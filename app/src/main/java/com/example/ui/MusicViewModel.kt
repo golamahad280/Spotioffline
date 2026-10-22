@@ -39,6 +39,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
   private val audioScanner = AudioScanner(application, songDao)
   private val playbackManager = PlaybackManager(application, songDao, viewModelScope)
+  val lyricsPipeline = com.example.data.lyrics.LyricsPipeline(application, songDao)
+  val lyricsDebugInfo = lyricsPipeline.debugInfo
 
   // Navigation & Modal states
   private val _currentTab = MutableStateFlow(BottomTab.HOME)
@@ -49,6 +51,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
   private val _isLyricsExpanded = MutableStateFlow(false)
   val isLyricsExpanded: StateFlow<Boolean> = _isLyricsExpanded.asStateFlow()
+
+  private val _isLyricsDebugOpen = MutableStateFlow(false)
+  val isLyricsDebugOpen: StateFlow<Boolean> = _isLyricsDebugOpen.asStateFlow()
 
   private val _isQueueOpen = MutableStateFlow(false)
   val isQueueOpen: StateFlow<Boolean> = _isQueueOpen.asStateFlow()
@@ -92,8 +97,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
   val scanProgress: StateFlow<ScanProgress> = audioScanner.scanProgress
 
-  // Playback flows forwarded from PlaybackManager
-  val currentSong: StateFlow<Song?> = playbackManager.currentSong
+  // Playback flows - currentSong combines player selection with Room DB for live cache updates!
+  val currentSong: StateFlow<Song?> = combine(playbackManager.currentSong, songDao.getAllSongs()) { active, all ->
+    if (active == null) null
+    else all.firstOrNull { it.id == active.id } ?: active
+  }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
   val isPlaying: StateFlow<Boolean> = playbackManager.isPlaying
   val currentPositionMs: StateFlow<Long> = playbackManager.currentPositionMs
   val durationMs: StateFlow<Long> = playbackManager.durationMs
@@ -106,7 +115,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
   val currentPreset: StateFlow<String> = playbackManager.currentPreset
   val availablePresets: List<String> = playbackManager.availablePresets
 
-  // Parsed lyrics lines for current playing song
+  // Parsed lyrics lines for current playing song directly from DB
   val currentLyricsLines: StateFlow<List<LrcLine>> = combine(currentSong) { (song) ->
     if (song?.hasLyrics == true && !song.lyricsText.isNullOrBlank()) {
       LrcParser.parse(song.lyricsText)
@@ -208,20 +217,38 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     _activeArtist.value = null
   }
 
-  fun openFixMatch(song: Song) {
-    _selectedSongForFixMatch.value = song
+  fun openLyricsDebug() {
+    _isLyricsDebugOpen.value = true
   }
 
-  fun closeFixMatch() {
-    _selectedSongForFixMatch.value = null
+  fun closeLyricsDebug() {
+    _isLyricsDebugOpen.value = false
+  }
+
+  suspend fun runLyricsSelfTest(): Map<String, Boolean> {
+    return lyricsPipeline.runSelfTest()
+  }
+
+  fun fetchLyricsForSong(song: Song, force: Boolean = true) {
+    viewModelScope.launch(Dispatchers.IO) {
+      val success = lyricsPipeline.fetchLyricsForSong(song, force = force)
+      if (success) {
+        playbackManager.refreshCurrentSongFromDb()
+      }
+    }
   }
 
   // Playback Controls
   fun playSong(song: Song, contextQueue: List<Song> = emptyList()) {
     playbackManager.playSong(song, contextQueue)
-    // Trigger background online enhancement if missing lyrics/cover
-    if (!song.hasLyrics || song.albumArtUri == null) {
-      viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch(Dispatchers.IO) {
+      if (!song.hasLyrics || song.lyricsText.isNullOrBlank()) {
+        val success = lyricsPipeline.fetchLyricsForSong(song, force = false)
+        if (success) {
+          playbackManager.refreshCurrentSongFromDb()
+        }
+      }
+      if (song.albumArtUri == null) {
         audioScanner.autoFetchMetadataForSong(song)
       }
     }
@@ -272,12 +299,22 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  fun openFixMatch(song: Song) {
+    _selectedSongForFixMatch.value = song
+  }
+
+  fun closeFixMatch() {
+    _selectedSongForFixMatch.value = null
+  }
+
   fun fixMatch(songId: String, title: String, artist: String, album: String) {
     viewModelScope.launch(Dispatchers.IO) {
       songDao.updateMetadata(songId, title, artist, album)
       val updated = songDao.getSongById(songId)
       if (updated != null) {
         audioScanner.autoFetchMetadataForSong(updated)
+        lyricsPipeline.fetchLyricsForSong(updated, force = true)
+        playbackManager.refreshCurrentSongFromDb()
       }
       closeFixMatch()
     }
@@ -287,6 +324,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
   fun scanDeviceAudio() {
     viewModelScope.launch(Dispatchers.IO) {
       audioScanner.scanDeviceAudio()
+      startBackgroundLyricsQueue()
+    }
+  }
+
+  fun startBackgroundLyricsQueue() {
+    viewModelScope.launch(Dispatchers.IO) {
+      val songsNeeding = songDao.getSongsNeedingLyrics()
+      for (s in songsNeeding) {
+        lyricsPipeline.fetchLyricsForSong(s, force = false)
+      }
     }
   }
 

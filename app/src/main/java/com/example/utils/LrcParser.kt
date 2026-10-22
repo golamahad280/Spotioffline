@@ -4,22 +4,38 @@ import com.example.data.model.LrcLine
 import java.util.regex.Pattern
 
 object LrcParser {
-  private val TIMESTAMP_PATTERN = Pattern.compile("\\[(\\d{1,2}):(\\d{2})(?:\\.(\\d{1,3}))?\\]")
+  private val TIMESTAMP_PATTERN = Pattern.compile("\\[(\\d{1,2}):(\\d{2})(?:[.:](\\d{1,3}))?\\]")
+  private val OFFSET_PATTERN = Pattern.compile("\\[offset:\\s*([+-]?\\d+)\\]", Pattern.CASE_INSENSITIVE)
 
   fun parse(rawText: String?): List<LrcLine> {
     if (rawText.isNullOrBlank()) return emptyList()
 
     val result = mutableListOf<LrcLine>()
     val lines = rawText.lines()
+    var fileOffsetMs = 0L
+
+    // Check for [offset: +/-ms] tag
+    for (line in lines) {
+      val trimmed = line.trim()
+      val offsetMatcher = OFFSET_PATTERN.matcher(trimmed)
+      if (offsetMatcher.find()) {
+        fileOffsetMs = offsetMatcher.group(1)?.toLongOrNull() ?: 0L
+        break
+      }
+    }
 
     for (line in lines) {
       val trimmed = line.trim()
       if (trimmed.isEmpty()) continue
 
-      // Ignore ID3/LRC header tags like [ti:Title], [ar:Artist], etc.
-      if (trimmed.startsWith("[ti:") || trimmed.startsWith("[ar:") ||
-          trimmed.startsWith("[al:") || trimmed.startsWith("[by:") ||
-          trimmed.startsWith("[offset:") || trimmed.startsWith("[re:")) {
+      // Ignore standard ID3/LRC metadata headers
+      if (trimmed.startsWith("[ti:", ignoreCase = true) ||
+          trimmed.startsWith("[ar:", ignoreCase = true) ||
+          trimmed.startsWith("[al:", ignoreCase = true) ||
+          trimmed.startsWith("[by:", ignoreCase = true) ||
+          trimmed.startsWith("[offset:", ignoreCase = true) ||
+          trimmed.startsWith("[re:", ignoreCase = true) ||
+          trimmed.startsWith("[ve:", ignoreCase = true)) {
         continue
       }
 
@@ -38,15 +54,17 @@ object LrcParser {
           else -> millisRaw.take(3).toLongOrNull() ?: 0L
         }
 
-        val totalMs = (minutes * 60 + seconds) * 1000 + millis
-        timestamps.add(totalMs)
+        val totalMs = (minutes * 60 + seconds) * 1000 + millis + fileOffsetMs
+        timestamps.add(totalMs.coerceAtLeast(0L))
         lastMatchEnd = matcher.end()
       }
 
       if (timestamps.isNotEmpty()) {
         val lyricsText = trimmed.substring(lastMatchEnd).trim()
-        for (time in timestamps) {
-          result.add(LrcLine(timestampMs = time, text = lyricsText))
+        if (lyricsText.isNotEmpty()) {
+          for (time in timestamps) {
+            result.add(LrcLine(timestampMs = time, text = lyricsText))
+          }
         }
       }
     }

@@ -139,6 +139,20 @@ class PlaybackManager(
     }
   }
 
+  fun updateCurrentSong(song: Song) {
+    if (_currentSong.value?.id == song.id) {
+      _currentSong.value = song
+    }
+  }
+
+  suspend fun refreshCurrentSongFromDb() {
+    val id = _currentSong.value?.id ?: return
+    val fresh = songDao.getSongById(id)
+    if (fresh != null) {
+      _currentSong.value = fresh
+    }
+  }
+
   private fun handleTrackCompletion() {
     when (_repeatMode.value) {
       RepeatMode.ONE -> {

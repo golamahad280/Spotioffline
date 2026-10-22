@@ -13,6 +13,12 @@ interface LrcLibService {
   ): retrofit2.Response<LrcLibResponse>
 
   @GET("api/search")
+  suspend fun searchLyricsByTrackAndArtist(
+    @Query("track_name") trackName: String,
+    @Query("artist_name") artistName: String
+  ): retrofit2.Response<List<LrcLibResponse>>
+
+  @GET("api/search")
   suspend fun searchLyrics(
     @Query("q") query: String
   ): retrofit2.Response<List<LrcLibResponse>>

@@ -199,47 +199,12 @@ class AudioScanner(
   suspend fun autoFetchMetadataForSong(song: Song): Song = withContext(Dispatchers.IO) {
     var updatedSong = song
 
-    // 1. Fetch Synced Lyrics from LRCLIB if not present
-    if (!song.hasLyrics || song.lyricsText.isNullOrBlank()) {
-      try {
-        val durationSec = (song.durationMs / 1000).toInt()
-        val response = NetworkClient.lrcLibService.getLyrics(
-          trackName = song.title,
-          artistName = song.artist,
-          albumName = if (song.album.equals("Single", true)) null else song.album,
-          duration = durationSec
-        )
-
-        val lrcBody = response.body()
-        if (response.isSuccessful && lrcBody != null) {
-          val synced = lrcBody.syncedLyrics
-          val plain = lrcBody.plainLyrics
-          if (!synced.isNullOrBlank()) {
-            songDao.updateLyrics(song.id, synced, isSynced = true)
-            updatedSong = updatedSong.copy(lyricsText = synced, hasLyrics = true, isSyncedLyrics = true)
-          } else if (!plain.isNullOrBlank()) {
-            songDao.updateLyrics(song.id, plain, isSynced = false)
-            updatedSong = updatedSong.copy(lyricsText = plain, hasLyrics = true, isSyncedLyrics = false)
-          }
-        } else {
-          // Try search query fallback
-          val searchResponse = NetworkClient.lrcLibService.searchLyrics("${song.artist} ${song.title}")
-          val results = searchResponse.body()
-          if (searchResponse.isSuccessful && !results.isNullOrEmpty()) {
-            val first = results.firstOrNull { !it.syncedLyrics.isNullOrBlank() } ?: results.first()
-            val synced = first.syncedLyrics
-            val plain = first.plainLyrics
-            if (!synced.isNullOrBlank()) {
-              songDao.updateLyrics(song.id, synced, isSynced = true)
-              updatedSong = updatedSong.copy(lyricsText = synced, hasLyrics = true, isSyncedLyrics = true)
-            } else if (!plain.isNullOrBlank()) {
-              songDao.updateLyrics(song.id, plain, isSynced = false)
-              updatedSong = updatedSong.copy(lyricsText = plain, hasLyrics = true, isSyncedLyrics = false)
-            }
-          }
-        }
-      } catch (_: Exception) {}
-    }
+    // 1. Fetch Synced Lyrics via robust LyricsPipeline
+    try {
+      val lyricsPipeline = com.example.data.lyrics.LyricsPipeline(context, songDao)
+      lyricsPipeline.fetchLyricsForSong(song)
+      songDao.getSongById(song.id)?.let { updatedSong = it }
+    } catch (_: Exception) {}
 
     // 2. Fetch High-Res Album Cover from iTunes if not present
     if (updatedSong.albumArtUri.isNullOrBlank()) {

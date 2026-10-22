@@ -13,8 +13,17 @@ object NetworkClient {
     .build()
 
   private val okHttpClient = OkHttpClient.Builder()
-    .connectTimeout(15, TimeUnit.SECONDS)
-    .readTimeout(15, TimeUnit.SECONDS)
+    .connectTimeout(10, TimeUnit.SECONDS)
+    .readTimeout(10, TimeUnit.SECONDS)
+    .writeTimeout(10, TimeUnit.SECONDS)
+    .addInterceptor { chain ->
+      val original = chain.request()
+      val request = original.newBuilder()
+        .header("User-Agent", "SpotiOffline/1.0 (https://github.com/aistudio/spotioffline; contact@example.com)")
+        .header("Accept", "application/json")
+        .build()
+      chain.proceed(request)
+    }
     .build()
 
   private val lrcLibRetrofit: Retrofit by lazy {

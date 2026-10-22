@@ -34,6 +34,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -79,6 +80,8 @@ fun LyricsScreen(
   onSeekTo: (Long) -> Unit,
   onUpdateOffset: (Long) -> Unit,
   onSaveManualLyrics: (String, Boolean) -> Unit,
+  onRetryFetch: ((Song) -> Unit)? = null,
+  onOpenDebug: (() -> Unit)? = null,
   modifier: Modifier = Modifier
 ) {
   if (song == null) return
@@ -325,12 +328,50 @@ fun LyricsScreen(
                 fontWeight = FontWeight.Medium
               )
             } else {
-              Text(
-                text = "No lyrics found for this song.\n\nTap the Edit icon in the top right to paste or type lyrics!",
-                color = SpotifyTextSecondary,
-                fontSize = 16.sp,
-                lineHeight = 24.sp
-              )
+              Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+              ) {
+                Text(
+                  text = "No lyrics found for this song yet.",
+                  color = SpotifyWhite,
+                  fontSize = 18.sp,
+                  fontWeight = FontWeight.Bold
+                )
+                Text(
+                  text = "We search online across LRCLIB and embedded tags automatically. You can try searching again, view the live debug request trace, or paste lyrics manually.",
+                  color = SpotifyTextSecondary,
+                  fontSize = 13.sp,
+                  lineHeight = 19.sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                  Button(
+                    onClick = { onRetryFetch?.invoke(song) },
+                    colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+                    modifier = Modifier.weight(1f)
+                  ) {
+                    Text("Search again", color = SpotifyBlack, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                  }
+                  OutlinedButton(
+                    onClick = { showEditDialog = true },
+                    modifier = Modifier.weight(1.2f)
+                  ) {
+                    Text("Paste manually", color = SpotifyWhite, fontSize = 12.sp)
+                  }
+                }
+                if (onOpenDebug != null) {
+                  OutlinedButton(
+                    onClick = onOpenDebug,
+                    modifier = Modifier.fillMaxWidth()
+                  ) {
+                    Text("View Lyrics Debug Trace", color = SpotifyGreen, fontSize = 12.sp)
+                  }
+                }
+              }
             }
           }
         }

@@ -67,6 +67,7 @@ fun SettingsScreen(
   onClearCoverCache: () -> Unit,
   onOpenEqualizer: () -> Unit,
   onOpenSleepTimer: () -> Unit,
+  onOpenLyricsDebug: () -> Unit,
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
@@ -235,6 +236,27 @@ fun SettingsScreen(
               fontWeight = FontWeight.Medium,
               modifier = Modifier.padding(top = 4.dp)
             )
+          }
+
+          Spacer(modifier = Modifier.height(14.dp))
+          HorizontalDivider(color = SpotifyDivider)
+          Spacer(modifier = Modifier.height(10.dp))
+
+          // Lyrics Debug Panel button
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable(onClick = onOpenLyricsDebug)
+              .padding(vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = null, tint = SpotifyGreen)
+              Spacer(modifier = Modifier.width(10.dp))
+              Text("Lyrics Pipeline Debug Panel", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Text("Open Debug >", color = SpotifyGreen, fontSize = 13.sp)
           }
         }
       }

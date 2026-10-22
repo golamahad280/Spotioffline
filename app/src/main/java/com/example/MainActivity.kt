@@ -33,6 +33,7 @@ import com.example.ui.BottomTab
 import com.example.ui.MusicViewModel
 import com.example.ui.components.EqualizerDialog
 import com.example.ui.components.FixMatchDialog
+import com.example.ui.components.LyricsDebugDialog
 import com.example.ui.components.LyricsScreen
 import com.example.ui.components.MiniPlayer
 import com.example.ui.components.NowPlayingModal
@@ -102,6 +103,8 @@ fun MainAppContent(viewModel: MusicViewModel) {
   val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
   val isNowPlayingExpanded by viewModel.isNowPlayingExpanded.collectAsStateWithLifecycle()
   val isLyricsExpanded by viewModel.isLyricsExpanded.collectAsStateWithLifecycle()
+  val isLyricsDebugOpen by viewModel.isLyricsDebugOpen.collectAsStateWithLifecycle()
+  val lyricsDebugInfo by viewModel.lyricsDebugInfo.collectAsStateWithLifecycle()
   val isQueueOpen by viewModel.isQueueOpen.collectAsStateWithLifecycle()
   val isEqualizerOpen by viewModel.isEqualizerOpen.collectAsStateWithLifecycle()
   val isSleepTimerOpen by viewModel.isSleepTimerOpen.collectAsStateWithLifecycle()
@@ -135,12 +138,13 @@ fun MainAppContent(viewModel: MusicViewModel) {
 
   // Back Navigation Handler
   BackHandler(
-    enabled = isLyricsExpanded || isNowPlayingExpanded || isQueueOpen ||
+    enabled = isLyricsDebugOpen || isLyricsExpanded || isNowPlayingExpanded || isQueueOpen ||
         isEqualizerOpen || isSleepTimerOpen || selectedSongForFixMatch != null ||
         isSettingsOpen || activePlaylist != null || activeArtist != null ||
         currentTab != BottomTab.HOME
   ) {
     when {
+      isLyricsDebugOpen -> viewModel.closeLyricsDebug()
       isLyricsExpanded -> viewModel.closeLyrics()
       isNowPlayingExpanded -> viewModel.closeNowPlaying()
       isQueueOpen -> viewModel.closeQueue()
@@ -174,7 +178,8 @@ fun MainAppContent(viewModel: MusicViewModel) {
             onClearLyricsCache = { viewModel.clearLyricsCache() },
             onClearCoverCache = { viewModel.clearCoverCache() },
             onOpenEqualizer = { viewModel.openEqualizer() },
-            onOpenSleepTimer = { viewModel.openSleepTimer() }
+            onOpenSleepTimer = { viewModel.openSleepTimer() },
+            onOpenLyricsDebug = { viewModel.openLyricsDebug() }
           )
         }
 
@@ -328,7 +333,9 @@ fun MainAppContent(viewModel: MusicViewModel) {
         },
         onSaveManualLyrics = { text, isSynced ->
           currentSong?.let { viewModel.updateLyrics(it.id, text, isSynced) }
-        }
+        },
+        onRetryFetch = { song -> viewModel.fetchLyricsForSong(song, force = true) },
+        onOpenDebug = { viewModel.openLyricsDebug() }
       )
     }
 
@@ -377,6 +384,17 @@ fun MainAppContent(viewModel: MusicViewModel) {
           viewModel.fixMatch(id, title, artist, album)
         },
         onDismiss = { viewModel.closeFixMatch() }
+      )
+    }
+
+    // Lyrics Debug Dialog (Step 1 & Step 7)
+    if (isLyricsDebugOpen) {
+      LyricsDebugDialog(
+        currentSong = currentSong,
+        debugInfo = lyricsDebugInfo,
+        onRetryFetch = { song -> viewModel.fetchLyricsForSong(song, force = true) },
+        onRunSelfTest = { viewModel.runLyricsSelfTest() },
+        onDismiss = { viewModel.closeLyricsDebug() }
       )
     }
   }

@@ -52,7 +52,22 @@ interface SongDao {
   @Query("UPDATE songs SET syncOffsetMs = :offset WHERE id = :songId")
   suspend fun updateSyncOffset(songId: String, offset: Long)
 
-  @Query("UPDATE songs SET lyricsText = :lyrics, hasLyrics = 1, isSyncedLyrics = :isSynced WHERE id = :songId")
+  @Query("SELECT * FROM songs WHERE id = :songId")
+  fun getSongByIdFlow(songId: String): Flow<Song?>
+
+  @Query("UPDATE songs SET lyricsText = :lyrics, hasLyrics = 1, isSyncedLyrics = :isSynced, lyricsSource = :source, lyricsFetchedAt = :fetchedAt, lyricsStatus = 'READY', lyricsError = NULL WHERE id = :songId")
+  suspend fun updateLyricsSuccess(songId: String, lyrics: String, isSynced: Boolean, source: String, fetchedAt: Long)
+
+  @Query("UPDATE songs SET lyricsStatus = 'NOT_FOUND', lyricsFetchedAt = :fetchedAt, lyricsError = :error WHERE id = :songId")
+  suspend fun updateLyricsNotFound(songId: String, fetchedAt: Long, error: String)
+
+  @Query("UPDATE songs SET lyricsStatus = 'FETCHING' WHERE id = :songId")
+  suspend fun setLyricsFetching(songId: String)
+
+  @Query("SELECT * FROM songs WHERE hasLyrics = 0 AND (lyricsStatus != 'NOT_FOUND' OR (:now - lyricsFetchedAt) > 604800000)")
+  suspend fun getSongsNeedingLyrics(now: Long = System.currentTimeMillis()): List<Song>
+
+  @Query("UPDATE songs SET lyricsText = :lyrics, hasLyrics = 1, isSyncedLyrics = :isSynced, lyricsStatus = 'READY' WHERE id = :songId")
   suspend fun updateLyrics(songId: String, lyrics: String, isSynced: Boolean)
 
   @Query("UPDATE songs SET albumArtUri = :artUri WHERE id = :songId")

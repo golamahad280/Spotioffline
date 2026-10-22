@@ -23,7 +23,11 @@ data class Song(
   val year: Int = 0,
   val trackNumber: Int = 0,
   val fileSize: Long = 0L,
-  val syncOffsetMs: Long = 0L
+  val syncOffsetMs: Long = 0L,
+  val lyricsSource: String? = null,
+  val lyricsFetchedAt: Long = 0L,
+  val lyricsStatus: String = "IDLE",
+  val lyricsError: String? = null
 )
 
 @Entity(tableName = "playlists")

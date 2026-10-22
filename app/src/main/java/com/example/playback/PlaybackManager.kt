@@ -1,11 +1,13 @@
 package com.example.playback
 
 import android.content.Context
-import android.media.AudioAttributes
-import android.media.MediaPlayer
 import android.media.audiofx.Equalizer
 import android.net.Uri
 import android.os.CountDownTimer
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import com.example.data.local.SongDao
 import com.example.data.model.RepeatMode
 import com.example.data.model.Song
@@ -33,7 +35,7 @@ class PlaybackManager(
   private val scope: CoroutineScope
 ) {
 
-  private var mediaPlayer: MediaPlayer? = null
+  private var exoPlayer: ExoPlayer? = null
   private var equalizer: Equalizer? = null
   private var positionUpdateJob: Job? = null
   private var sleepTimer: CountDownTimer? = null
@@ -80,6 +82,25 @@ class PlaybackManager(
     startPositionTicker()
   }
 
+  private fun getOrCreatePlayer(): ExoPlayer {
+    val existingServicePlayer = MusicPlaybackService.getInstance()?.player
+    if (existingServicePlayer != null) {
+      exoPlayer = existingServicePlayer
+      return existingServicePlayer
+    }
+    val player = exoPlayer ?: ExoPlayer.Builder(context).build().also { p ->
+      p.addListener(object : Player.Listener {
+        override fun onPlaybackStateChanged(playbackState: Int) {
+          if (playbackState == Player.STATE_ENDED) {
+            handleTrackCompletion()
+          }
+        }
+      })
+      exoPlayer = p
+    }
+    return player
+  }
+
   fun playSong(song: Song, contextQueue: List<Song> = emptyList()) {
     val fullQueue = if (contextQueue.isNotEmpty()) contextQueue else listOf(song)
     val index = fullQueue.indexOfFirst { it.id == song.id }.let { if (it >= 0) it else 0 }
@@ -105,34 +126,43 @@ class PlaybackManager(
     _currentSong.value = song
 
     try {
-      mediaPlayer?.release()
-      mediaPlayer = MediaPlayer().apply {
-        setAudioAttributes(
-          AudioAttributes.Builder()
-            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-            .setUsage(AudioAttributes.USAGE_MEDIA)
-            .build()
-        )
-        setDataSource(context, Uri.parse(song.uriString))
-        prepare()
-        start()
+      val player = getOrCreatePlayer()
+      player.stop()
+      player.clearMediaItems()
+
+      val displayArtist = if (song.artist.isBlank() || song.artist.equals("Unknown Artist", ignoreCase = true) || song.artist.equals("<unknown>", ignoreCase = true)) {
+        "SpotiOffline"
+      } else {
+        song.artist
       }
+
+      val mediaMetadata = MediaMetadata.Builder()
+        .setTitle(song.title)
+        .setArtist(displayArtist)
+        .setAlbumTitle(song.album)
+        .setArtworkUri(if (!song.albumArtUri.isNullOrBlank()) Uri.parse(song.albumArtUri) else null)
+        .build()
+
+      val mediaItem = MediaItem.Builder()
+        .setUri(Uri.parse(song.uriString))
+        .setMediaId(song.id)
+        .setMediaMetadata(mediaMetadata)
+        .build()
+
+      player.setMediaItem(mediaItem)
+      player.prepare()
+      player.play()
 
       setupEqualizer()
 
       _isPlaying.value = true
-      _durationMs.value = mediaPlayer?.duration?.toLong()?.coerceAtLeast(song.durationMs) ?: song.durationMs
+      _durationMs.value = player.duration.let { if (it > 0) it else song.durationMs }
       _currentPositionMs.value = 0L
-
-      mediaPlayer?.setOnCompletionListener {
-        handleTrackCompletion()
-      }
 
       scope.launch(Dispatchers.IO) {
         songDao.incrementPlayCount(song.id, System.currentTimeMillis())
       }
 
-      // Notify service if needed
       MusicPlaybackService.startOrUpdate(context, song, isPlaying = true)
     } catch (e: Exception) {
       _isPlaying.value = false
@@ -142,6 +172,28 @@ class PlaybackManager(
   fun updateCurrentSong(song: Song) {
     if (_currentSong.value?.id == song.id) {
       _currentSong.value = song
+      // Also update player media metadata if active
+      try {
+        val player = getOrCreatePlayer()
+        val displayArtist = if (song.artist.isBlank() || song.artist.equals("Unknown Artist", ignoreCase = true) || song.artist.equals("<unknown>", ignoreCase = true)) {
+          "SpotiOffline"
+        } else {
+          song.artist
+        }
+        val mediaMetadata = MediaMetadata.Builder()
+          .setTitle(song.title)
+          .setArtist(displayArtist)
+          .setAlbumTitle(song.album)
+          .setArtworkUri(if (!song.albumArtUri.isNullOrBlank()) Uri.parse(song.albumArtUri) else null)
+          .build()
+        // If current media item matches, update metadata
+        if (player.currentMediaItem?.mediaId == song.id) {
+          player.replaceMediaItem(
+            player.currentMediaItemIndex,
+            player.currentMediaItem!!.buildUpon().setMediaMetadata(mediaMetadata).build()
+          )
+        }
+      } catch (_: Exception) {}
     }
   }
 
@@ -149,15 +201,16 @@ class PlaybackManager(
     val id = _currentSong.value?.id ?: return
     val fresh = songDao.getSongById(id)
     if (fresh != null) {
-      _currentSong.value = fresh
+      updateCurrentSong(fresh)
     }
   }
 
   private fun handleTrackCompletion() {
     when (_repeatMode.value) {
       RepeatMode.ONE -> {
-        mediaPlayer?.seekTo(0)
-        mediaPlayer?.start()
+        val player = getOrCreatePlayer()
+        player.seekTo(0)
+        player.play()
         _isPlaying.value = true
       }
       RepeatMode.ALL -> {
@@ -176,10 +229,8 @@ class PlaybackManager(
   }
 
   fun togglePlayPause() {
-    val player = mediaPlayer ?: run {
-      if (_currentSong.value != null) {
-        playCurrentQueueItem()
-      }
+    val player = getOrCreatePlayer()
+    if (_currentSong.value == null) {
       return
     }
 
@@ -188,9 +239,13 @@ class PlaybackManager(
       _isPlaying.value = false
       _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = false) }
     } else {
-      player.start()
-      _isPlaying.value = true
-      _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = true) }
+      if (player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) {
+        playCurrentQueueItem()
+      } else {
+        player.play()
+        _isPlaying.value = true
+        _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = true) }
+      }
     }
   }
 
@@ -209,9 +264,8 @@ class PlaybackManager(
   }
 
   fun previous() {
-    val player = mediaPlayer
-    // If playing for more than 3 seconds, restart current track
-    if (player != null && player.currentPosition > 3000) {
+    val player = getOrCreatePlayer()
+    if (player.currentPosition > 3000) {
       player.seekTo(0)
       _currentPositionMs.value = 0L
       return
@@ -226,8 +280,10 @@ class PlaybackManager(
   }
 
   fun seekTo(positionMs: Long) {
-    mediaPlayer?.seekTo(positionMs.toInt())
-    _currentPositionMs.value = positionMs
+    try {
+      getOrCreatePlayer().seekTo(positionMs)
+      _currentPositionMs.value = positionMs
+    } catch (_: Exception) {}
   }
 
   fun toggleShuffle() {
@@ -280,7 +336,9 @@ class PlaybackManager(
 
       override fun onFinish() {
         _sleepTimerRemainingMinutes.value = 0
-        mediaPlayer?.pause()
+        try {
+          getOrCreatePlayer().pause()
+        } catch (_: Exception) {}
         _isPlaying.value = false
         _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = false) }
       }
@@ -294,7 +352,7 @@ class PlaybackManager(
 
   private fun setupEqualizer() {
     try {
-      val sessionId = mediaPlayer?.audioSessionId ?: return
+      val sessionId = getOrCreatePlayer().audioSessionId
       if (equalizer == null || equalizer?.hasControl() == false) {
         equalizer = Equalizer(0, sessionId).apply {
           enabled = true
@@ -353,7 +411,7 @@ class PlaybackManager(
         "Pop" -> listOf(-0.1f, 0.3f, 0.6f, 0.4f, -0.2f)
         "Electronic" -> listOf(0.7f, 0.5f, 0.0f, 0.4f, 0.6f)
         "Jazz" -> listOf(0.3f, 0.1f, 0.2f, 0.3f, 0.5f)
-        else -> listOf(0.0f, 0.0f, 0.0f, 0.0f, 0.0f) // Flat
+        else -> listOf(0.0f, 0.0f, 0.0f, 0.0f, 0.0f)
       }
 
       val bands = _equalizerBands.value.toMutableList()
@@ -371,10 +429,13 @@ class PlaybackManager(
     positionUpdateJob?.cancel()
     positionUpdateJob = scope.launch(Dispatchers.Main) {
       while (isActive) {
-        val player = mediaPlayer
+        val player = exoPlayer
         if (player != null && _isPlaying.value) {
           try {
-            _currentPositionMs.value = player.currentPosition.toLong()
+            _currentPositionMs.value = player.currentPosition
+            if (player.duration > 0) {
+              _durationMs.value = player.duration
+            }
           } catch (_: Exception) {}
         }
         delay(200)
@@ -387,7 +448,7 @@ class PlaybackManager(
     sleepTimer?.cancel()
     try {
       equalizer?.release()
-      mediaPlayer?.release()
+      exoPlayer?.release()
     } catch (_: Exception) {}
   }
 }

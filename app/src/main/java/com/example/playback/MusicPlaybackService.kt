@@ -1,42 +1,36 @@
 package com.example.playback
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.os.Build
-import android.os.IBinder
-import androidx.core.app.NotificationCompat
+import android.os.Handler
+import android.os.Looper
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaSessionService
 import com.example.MainActivity
-import com.example.R
-import com.example.data.model.Song
 
-class MusicPlaybackService : Service() {
+class MusicPlaybackService : MediaSessionService() {
+
+  private var mediaSession: MediaSession? = null
+  lateinit var player: ExoPlayer
+    private set
+
+  private val handler = Handler(Looper.getMainLooper())
+  private var idleTimeoutRunnable: Runnable? = null
+  private var queueEndRunnable: Runnable? = null
 
   companion object {
-    private const val CHANNEL_ID = "spoti_offline_playback_channel"
-    private const val NOTIFICATION_ID = 1001
+    private var instance: MusicPlaybackService? = null
+    fun getInstance(): MusicPlaybackService? = instance
 
-    const val ACTION_PLAY = "com.example.ACTION_PLAY"
-    const val ACTION_PAUSE = "com.example.ACTION_PAUSE"
-    const val ACTION_NEXT = "com.example.ACTION_NEXT"
-    const val ACTION_PREV = "com.example.ACTION_PREV"
-
-    private const val EXTRA_TITLE = "extra_title"
-    private const val EXTRA_ARTIST = "extra_artist"
-    private const val EXTRA_IS_PLAYING = "extra_is_playing"
-
-    fun startOrUpdate(context: Context, song: Song, isPlaying: Boolean) {
-      val intent = Intent(context, MusicPlaybackService::class.java).apply {
-        putExtra(EXTRA_TITLE, song.title)
-        putExtra(EXTRA_ARTIST, song.artist)
-        putExtra(EXTRA_IS_PLAYING, isPlaying)
-      }
+    fun startOrUpdate(context: Context, song: com.example.data.model.Song, isPlaying: Boolean) {
+      val intent = Intent(context, MusicPlaybackService::class.java)
       try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
           context.startForegroundService(intent)
         } else {
           context.startService(intent)
@@ -47,56 +41,122 @@ class MusicPlaybackService : Service() {
 
   override fun onCreate() {
     super.onCreate()
-    createNotificationChannel()
-  }
+    instance = this
 
-  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    val title = intent?.getStringExtra(EXTRA_TITLE) ?: "SpotiOffline"
-    val artist = intent?.getStringExtra(EXTRA_ARTIST) ?: "Offline Music"
-    val isPlaying = intent?.getBooleanExtra(EXTRA_IS_PLAYING, false) ?: false
+    player = ExoPlayer.Builder(this)
+      .setAudioAttributes(
+        AudioAttributes.Builder()
+          .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+          .setUsage(C.USAGE_MEDIA)
+          .build(),
+        true
+      )
+      .setWakeMode(C.WAKE_MODE_LOCAL)
+      .setHandleAudioBecomingNoisy(true)
+      .build()
 
-    val notification = buildNotification(title, artist, isPlaying)
-    startForeground(NOTIFICATION_ID, notification)
+    player.addListener(object : Player.Listener {
+      override fun onIsPlayingChanged(isPlaying: Boolean) {
+        if (isPlaying) {
+          cancelIdleTimeout()
+          cancelQueueEndTimeout()
+        } else {
+          if (player.playbackState == Player.STATE_ENDED) {
+            scheduleQueueEndTimeout()
+          } else {
+            scheduleIdleTimeout()
+          }
+          try {
+            stopForeground(false)
+          } catch (_: Exception) {}
+        }
+      }
 
-    return START_NOT_STICKY
-  }
+      override fun onPlaybackStateChanged(playbackState: Int) {
+        if (playbackState == Player.STATE_ENDED) {
+          if (!player.isPlaying) {
+            scheduleQueueEndTimeout()
+          }
+        }
+      }
+    })
 
-  private fun buildNotification(title: String, artist: String, isPlaying: Boolean): Notification {
-    val openAppIntent = Intent(this, MainActivity::class.java).apply {
+    val intent = Intent(this, MainActivity::class.java).apply {
       flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
     }
-    val contentPendingIntent = PendingIntent.getActivity(
+    val pendingIntent = PendingIntent.getActivity(
       this,
       0,
-      openAppIntent,
+      intent,
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
-    return NotificationCompat.Builder(this, CHANNEL_ID)
-      .setSmallIcon(R.drawable.spotioffline_launcher_fg_1792666780785)
-      .setContentTitle(title)
-      .setContentText(artist)
-      .setContentIntent(contentPendingIntent)
-      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-      .setOngoing(isPlaying)
-      .setPriority(NotificationCompat.PRIORITY_LOW)
+    mediaSession = MediaSession.Builder(this, player)
+      .setSessionActivity(pendingIntent)
       .build()
   }
 
-  private fun createNotificationChannel() {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      val channel = NotificationChannel(
-        CHANNEL_ID,
-        "Music Playback",
-        NotificationManager.IMPORTANCE_LOW
-      ).apply {
-        description = "SpotiOffline Music Player Controls"
-        setShowBadge(false)
-      }
-      val manager = getSystemService(NotificationManager::class.java)
-      manager?.createNotificationChannel(channel)
+  override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
+
+  override fun onTaskRemoved(rootIntent: Intent?) {
+    super.onTaskRemoved(rootIntent)
+    val isPlaying = player.isPlaying
+    if (!isPlaying) {
+      try {
+        player.pause()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+      } catch (_: Exception) {}
     }
   }
 
-  override fun onBind(intent: Intent?): IBinder? = null
+  private fun scheduleIdleTimeout() {
+    cancelIdleTimeout()
+    idleTimeoutRunnable = Runnable {
+      if (!player.isPlaying) {
+        try {
+          player.release()
+          stopForeground(STOP_FOREGROUND_REMOVE)
+          stopSelf()
+        } catch (_: Exception) {}
+      }
+    }
+    handler.postDelayed(idleTimeoutRunnable!!, 10 * 60 * 1000L)
+  }
+
+  private fun cancelIdleTimeout() {
+    idleTimeoutRunnable?.let { handler.removeCallbacks(it) }
+    idleTimeoutRunnable = null
+  }
+
+  private fun scheduleQueueEndTimeout() {
+    cancelQueueEndTimeout()
+    queueEndRunnable = Runnable {
+      if (!player.isPlaying) {
+        try {
+          player.release()
+          stopForeground(STOP_FOREGROUND_REMOVE)
+          stopSelf()
+        } catch (_: Exception) {}
+      }
+    }
+    handler.postDelayed(queueEndRunnable!!, 30 * 1000L)
+  }
+
+  private fun cancelQueueEndTimeout() {
+    queueEndRunnable?.let { handler.removeCallbacks(it) }
+    queueEndRunnable = null
+  }
+
+  override fun onDestroy() {
+    cancelIdleTimeout()
+    cancelQueueEndTimeout()
+    mediaSession?.run {
+      player.release()
+      release()
+      mediaSession = null
+    }
+    instance = null
+    super.onDestroy()
+  }
 }

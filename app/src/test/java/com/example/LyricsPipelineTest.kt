@@ -47,6 +47,14 @@ class LyricsPipelineTest {
         override suspend fun deleteSongById(songId: String) {}
         override suspend fun clearAllLyrics() {}
         override suspend fun clearAllAlbumArt() {}
+        override fun getHiddenSongs() = kotlinx.coroutines.flow.flowOf(emptyList<Song>())
+        override suspend fun setHidden(songId: String, isHidden: Boolean) {}
+        override suspend fun setHiddenBatch(songIds: List<String>, isHidden: Boolean) {}
+        override suspend fun updateSongMetadataLocked(songId: String, title: String, artist: String, titleLocked: Boolean, artistLocked: Boolean) {}
+        override suspend fun updateCustomCoverLocked(songId: String, artUri: String?, coverLocked: Boolean) {}
+        override suspend fun updateCoverSuccess(songId: String, artUri: String, source: String, fetchedAt: Long) {}
+        override suspend fun updateCoverStatus(songId: String, status: String, fetchedAt: Long, source: String?) {}
+        override suspend fun getSongsNeedingCover(now: Long): List<Song> = emptyList()
         override suspend fun getSongCount(): Int = 0
       }
     )

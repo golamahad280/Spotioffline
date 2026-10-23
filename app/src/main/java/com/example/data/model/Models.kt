@@ -27,7 +27,14 @@ data class Song(
   val lyricsSource: String? = null,
   val lyricsFetchedAt: Long = 0L,
   val lyricsStatus: String = "IDLE",
-  val lyricsError: String? = null
+  val lyricsError: String? = null,
+  val isHidden: Boolean = false,
+  val titleLocked: Boolean = false,
+  val artistLocked: Boolean = false,
+  val coverLocked: Boolean = false,
+  val coverStatus: String = "IDLE",
+  val coverFetchedAt: Long = 0L,
+  val coverSource: String? = null
 )
 
 @Entity(tableName = "playlists")

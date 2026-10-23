@@ -1,11 +1,14 @@
 package com.example.playback
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import androidx.core.app.NotificationCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -67,6 +70,25 @@ class MusicPlaybackService : MediaSessionService() {
       intent,
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val channelId = "music_playback_channel"
+      val channelName = "Music Playback"
+      val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+      val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_LOW).apply {
+        description = "SpotiOffline Music Playback"
+      }
+      notificationManager.createNotificationChannel(channel)
+    }
+
+    val notification = NotificationCompat.Builder(this, "music_playback_channel")
+      .setContentTitle("SpotiOffline")
+      .setContentText("Playing music")
+      .setSmallIcon(android.R.drawable.ic_media_play)
+      .setContentIntent(pendingIntent)
+      .build()
+
+    startForeground(1, notification)
 
     mediaSession = MediaSession.Builder(this, player)
       .setSessionActivity(pendingIntent)

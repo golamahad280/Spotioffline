@@ -42,7 +42,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import coil.request.ImageRequest
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -455,7 +457,11 @@ fun SongCard(
     ) {
       if (!song.albumArtUri.isNullOrBlank()) {
         AsyncImage(
-          model = song.albumArtUri,
+          model = ImageRequest.Builder(LocalContext.current)
+            .data(song.albumArtUri)
+            .size(256, 256)
+            .crossfade(true)
+            .build(),
           contentDescription = song.title,
           contentScale = ContentScale.Crop,
           modifier = Modifier.fillMaxSize()
@@ -549,7 +555,11 @@ fun SongRowItem(
     ) {
       if (!song.albumArtUri.isNullOrBlank()) {
         AsyncImage(
-          model = song.albumArtUri,
+          model = ImageRequest.Builder(LocalContext.current)
+            .data(song.albumArtUri)
+            .size(256, 256)
+            .crossfade(true)
+            .build(),
           contentDescription = null,
           contentScale = ContentScale.Crop,
           modifier = Modifier.fillMaxSize()

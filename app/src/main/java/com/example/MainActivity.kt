@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
@@ -24,8 +25,12 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.Song
@@ -67,6 +72,20 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainAppContent(viewModel: MusicViewModel) {
+  val context = LocalContext.current
+  var pendingDeletedSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
+
+  // Launcher for MediaStore createDeleteRequest / RecoverableSecurityException
+  val deleteSenderLauncher = rememberLauncherForActivityResult(
+    ActivityResultContracts.StartIntentSenderForResult()
+  ) { result ->
+    if (result.resultCode == android.app.Activity.RESULT_OK) {
+      val ids = pendingDeletedSongs.map { it.id }
+      viewModel.finishSongDeletion(ids)
+      pendingDeletedSongs = emptyList()
+    }
+  }
+
   // Permission Launcher
   val permissionLauncher = rememberLauncherForActivityResult(
     ActivityResultContracts.RequestMultiplePermissions()
@@ -87,8 +106,18 @@ fun MainAppContent(viewModel: MusicViewModel) {
     }
   }
 
-  // Request permissions once on launch if needed
+  // Request permissions once on launch if needed & auto-scan if permission already granted
   LaunchedEffect(Unit) {
+    val alreadyGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
+    } else {
+      ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+    }
+
+    if (alreadyGranted) {
+      viewModel.scanDeviceAudio()
+    }
+
     val neededPermissions = mutableListOf<String>()
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       neededPermissions.add(Manifest.permission.READ_MEDIA_AUDIO)
@@ -115,6 +144,7 @@ fun MainAppContent(viewModel: MusicViewModel) {
 
   val allSongs by viewModel.allSongs.collectAsStateWithLifecycle()
   val likedSongs by viewModel.likedSongs.collectAsStateWithLifecycle()
+  val hiddenSongs by viewModel.hiddenSongs.collectAsStateWithLifecycle()
   val recentlyPlayed by viewModel.recentlyPlayed.collectAsStateWithLifecycle()
   val mostPlayed by viewModel.mostPlayed.collectAsStateWithLifecycle()
   val artists by viewModel.artists.collectAsStateWithLifecycle()
@@ -173,6 +203,8 @@ fun MainAppContent(viewModel: MusicViewModel) {
         isSettingsOpen -> {
           SettingsScreen(
             totalSongs = allSongs.size,
+            hiddenSongs = hiddenSongs,
+            onRestoreSong = { id -> viewModel.restoreSong(id) },
             onBack = { viewModel.closeSettings() },
             onScanClick = { viewModel.scanDeviceAudio() },
             onClearLyricsCache = { viewModel.clearLyricsCache() },
@@ -248,7 +280,22 @@ fun MainAppContent(viewModel: MusicViewModel) {
                 },
                 onScanClick = { viewModel.scanDeviceAudio() },
                 onPickAudioFiles = { filePickerLauncher.launch(arrayOf("audio/*")) },
-                onCreatePlaylist = { name -> viewModel.createPlaylist(name) }
+                onCreatePlaylist = { name -> viewModel.createPlaylist(name) },
+                onRenameSong = { songId, title, artist -> viewModel.renameSong(songId, title, artist) },
+                onHideSong = { song -> viewModel.hideSong(song) },
+                onHideSongs = { songs -> viewModel.hideSongs(songs) },
+                onDeleteSongsFromPhone = { songs ->
+                  pendingDeletedSongs = songs
+                  viewModel.deleteSongsFromPhone(songs) { intentSender ->
+                    deleteSenderLauncher.launch(
+                      IntentSenderRequest.Builder(intentSender).build()
+                    )
+                  }
+                },
+                onChangeCover = { songId, uri -> viewModel.changeCustomCover(songId, uri) },
+                onRemoveCustomCover = { song -> viewModel.removeCustomCover(song) },
+                onSearchCoverAgain = { song -> viewModel.searchCoverAgain(song) },
+                onSearchCoverCustomName = { song, query -> viewModel.searchCoverCustomName(song, query) }
               )
             }
           }

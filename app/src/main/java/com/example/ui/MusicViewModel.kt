@@ -16,6 +16,11 @@ import com.example.playback.EqualizerBand
 import com.example.playback.PlaybackManager
 import com.example.utils.DemoAudioGenerator
 import com.example.utils.LrcParser
+import android.os.Build
+import android.provider.MediaStore
+import com.example.utils.CrashLogger
+import com.example.utils.ImageUtils
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -95,6 +100,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
   val playlists: StateFlow<List<Playlist>> = playlistDao.getAllPlaylists()
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+  val hiddenSongs: StateFlow<List<Song>> = songDao.getHiddenSongs()
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+    CrashLogger.e("MusicViewModel", "Coroutine exception caught in background task", throwable)
+  }
+
   val scanProgress: StateFlow<ScanProgress> = audioScanner.scanProgress
 
   // Playback flows - currentSong combines player selection with Room DB for live cache updates!
@@ -136,10 +148,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
   init {
     // Check if initial database is empty; if so, generate demo tracks so user has instant playable content!
-    viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
       val count = songDao.getSongCount()
       if (count == 0) {
         loadDemoTracks()
+      } else {
+        startBackgroundLyricsQueue()
+        startBackgroundCoverQueue()
       }
     }
   }
@@ -302,9 +317,48 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
-  fun updateLyrics(songId: String, text: String, isSynced: Boolean) {
-    viewModelScope.launch(Dispatchers.IO) {
-      songDao.updateLyrics(songId, text, isSynced)
+  fun updateLyrics(songId: String, text: String, isSynced: Boolean, source: String? = null) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      val effectiveSource = source ?: if (isSynced) "Manual LRC" else "Manual Plain"
+      songDao.updateLyricsSuccess(
+        songId = songId,
+        lyrics = text,
+        isSynced = isSynced,
+        source = effectiveSource,
+        fetchedAt = System.currentTimeMillis()
+      )
+      playbackManager.refreshCurrentSongFromDb()
+      CrashLogger.i("MusicViewModel", "Updated manual lyrics for song $songId (synced=$isSynced, source=$effectiveSource)")
+    }
+  }
+
+  suspend fun generateLyricsWithAi(song: Song): Boolean {
+    val success = lyricsPipeline.generateLyricsWithGemini(song)
+    if (success) {
+      playbackManager.refreshCurrentSongFromDb()
+    }
+    return success
+  }
+
+  suspend fun autoSyncLyricsWithAi(song: Song, plainLyrics: String): String? {
+    val synced = lyricsPipeline.autoSyncLyricsWithGemini(song, plainLyrics)
+    if (synced != null) {
+      playbackManager.refreshCurrentSongFromDb()
+    }
+    return synced
+  }
+
+  fun searchCoverAgain(song: Song) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      audioScanner.coverPipeline.autoFetchCoverForSong(song, force = true)
+      playbackManager.refreshCurrentSongFromDb()
+    }
+  }
+
+  fun searchCoverCustomName(song: Song, query: String) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      audioScanner.coverPipeline.searchCoverWithCustomQuery(song, query)
+      playbackManager.refreshCurrentSongFromDb()
     }
   }
 
@@ -331,14 +385,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
   // Scanning & Importing
   fun scanDeviceAudio() {
-    viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
       audioScanner.scanDeviceAudio()
       startBackgroundLyricsQueue()
+      startBackgroundCoverQueue()
     }
   }
 
   fun startBackgroundLyricsQueue() {
-    viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
       val songsNeeding = songDao.getSongsNeedingLyrics()
       for (s in songsNeeding) {
         lyricsPipeline.fetchLyricsForSong(s, force = false)
@@ -346,8 +401,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  fun startBackgroundCoverQueue() {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      val songsNeeding = songDao.getSongsNeedingCover()
+      for (s in songsNeeding) {
+        audioScanner.coverPipeline.autoFetchCoverForSong(s, force = false)
+      }
+    }
+  }
+
   fun importAudioUri(uri: Uri) {
-    viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
       val imported = audioScanner.importAudioUri(uri)
       if (imported != null) {
         audioScanner.autoFetchMetadataForSong(imported)
@@ -355,8 +419,150 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  // Song Management (Rename, Hide, Restore, Delete, Custom Cover)
+  fun hideSong(song: Song) {
+    hideSongs(listOf(song))
+  }
+
+  fun hideSongs(songs: List<Song>) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      val ids = songs.map { it.id }
+      handleQueueAndPlaybackForRemovedSongs(ids.toSet())
+      songDao.setHiddenBatch(ids, true)
+      CrashLogger.i("MusicViewModel", "Marked ${ids.size} songs as hidden")
+    }
+  }
+
+  fun restoreSong(songId: String) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      songDao.setHidden(songId, false)
+      CrashLogger.i("MusicViewModel", "Restored song $songId from hidden")
+    }
+  }
+
+  fun renameSong(songId: String, newTitle: String, newArtist: String) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      songDao.updateSongMetadataLocked(
+        songId = songId,
+        title = newTitle.trim(),
+        artist = newArtist.trim(),
+        titleLocked = true,
+        artistLocked = true
+      )
+      playbackManager.refreshCurrentSongFromDb()
+      CrashLogger.i("MusicViewModel", "Renamed song $songId to $newTitle by $newArtist")
+    }
+  }
+
+  fun changeCustomCover(songId: String, imageUri: Uri) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      val savedPath = ImageUtils.saveCustomArtwork(getApplication(), imageUri, songId)
+      if (savedPath != null) {
+        songDao.updateCustomCoverLocked(songId, savedPath, coverLocked = true)
+        playbackManager.refreshCurrentSongFromDb()
+        CrashLogger.i("MusicViewModel", "Updated custom cover for song $songId: $savedPath")
+      }
+    }
+  }
+
+  fun removeCustomCover(song: Song) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      songDao.updateCustomCoverLocked(song.id, null, coverLocked = false)
+      val updated = songDao.getSongById(song.id)
+      if (updated != null) {
+        audioScanner.autoFetchMetadataForSong(updated)
+      }
+      playbackManager.refreshCurrentSongFromDb()
+      CrashLogger.i("MusicViewModel", "Removed custom cover for song ${song.id}")
+    }
+  }
+
+  fun deleteSongsFromPhone(
+    songs: List<Song>,
+    onIntentSenderRequired: (android.content.IntentSender) -> Unit
+  ) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      val uris = songs.mapNotNull {
+        try { Uri.parse(it.uriString) } catch (_: Exception) { null }
+      }
+
+      // Android 11+ (API 30+) MediaStore.createDeleteRequest
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && uris.isNotEmpty()) {
+        try {
+          val pi = MediaStore.createDeleteRequest(getApplication<Application>().contentResolver, uris)
+          onIntentSenderRequired(pi.intentSender)
+          return@launch
+        } catch (e: Exception) {
+          CrashLogger.e("MusicViewModel", "Error creating delete request", e)
+        }
+      }
+
+      // Android 10 RecoverableSecurityException or older direct delete
+      val deletedIds = mutableListOf<String>()
+      for (song in songs) {
+        var deleted = false
+        val uri = try { Uri.parse(song.uriString) } catch (_: Exception) { null }
+        if (uri != null) {
+          try {
+            val count = getApplication<Application>().contentResolver.delete(uri, null, null)
+            if (count > 0) deleted = true
+          } catch (sec: SecurityException) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && sec is android.app.RecoverableSecurityException) {
+              onIntentSenderRequired(sec.userAction.actionIntent.intentSender)
+              return@launch
+            }
+          } catch (e: Exception) {
+            CrashLogger.e("MusicViewModel", "Failed deleting URI ${song.uriString}", e)
+          }
+        }
+        if (!deleted && song.filePath != null) {
+          try {
+            val file = java.io.File(song.filePath)
+            if (file.exists()) {
+              deleted = file.delete()
+            }
+          } catch (e: Exception) {
+            CrashLogger.e("MusicViewModel", "Failed deleting file ${song.filePath}", e)
+          }
+        }
+        if (deleted) {
+          deletedIds.add(song.id)
+        }
+      }
+
+      if (deletedIds.isNotEmpty()) {
+        finishSongDeletion(deletedIds)
+      }
+    }
+  }
+
+  fun finishSongDeletion(deletedIds: List<String>) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      handleQueueAndPlaybackForRemovedSongs(deletedIds.toSet())
+      songDao.deleteSongsByIds(deletedIds)
+      CrashLogger.i("MusicViewModel", "Finished deletion of ${deletedIds.size} songs from DB")
+    }
+  }
+
+  private fun handleQueueAndPlaybackForRemovedSongs(affectedIds: Set<String>) {
+    val activeSong = currentSong.value
+    if (activeSong != null && affectedIds.contains(activeSong.id)) {
+      if (queue.value.size > 1) {
+        playbackManager.next()
+      } else {
+        if (isPlaying.value) playbackManager.togglePlayPause()
+      }
+    }
+    val currentQ = queue.value
+    for (i in currentQ.indices.reversed()) {
+      if (affectedIds.contains(currentQ[i].id)) {
+        playbackManager.removeFromQueue(i)
+      }
+    }
+  }
+
   fun loadDemoTracks() {
-    viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
       val demoSongs = DemoAudioGenerator.generateDemoTracks(getApplication())
       songDao.insertSongs(demoSongs)
     }
@@ -364,13 +570,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
   // Playlist management
   fun createPlaylist(name: String, description: String? = null) {
-    viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
       playlistDao.insertPlaylist(Playlist(name = name, description = description))
     }
   }
 
   fun deletePlaylist(playlistId: Long) {
-    viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
       playlistDao.deletePlaylist(playlistId)
       if (_activePlaylist.value?.id == playlistId) {
         _activePlaylist.value = null
@@ -379,14 +585,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun addSongToPlaylist(playlistId: Long, songId: String) {
-    viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
       val count = playlistDao.getSongCountInPlaylist(playlistId)
       playlistDao.insertPlaylistSong(PlaylistSongCrossRef(playlistId, songId, count))
     }
   }
 
   fun removeSongFromPlaylist(playlistId: Long, songId: String) {
-    viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
       playlistDao.removeSongFromPlaylist(playlistId, songId)
     }
   }
@@ -396,13 +602,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
   // Cache management
   fun clearLyricsCache() {
-    viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
       songDao.clearAllLyrics()
     }
   }
 
   fun clearCoverCache() {
-    viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
       songDao.clearAllAlbumArt()
     }
   }

@@ -10,6 +10,10 @@ import com.example.data.network.ITunesTrack
 import com.example.data.network.LrcLibResponse
 import com.example.data.network.NetworkClient
 import com.example.utils.LrcParser
+import com.example.data.lyrics.sources.GeminiLyricsSource
+import com.example.data.lyrics.sources.GeniusLyricsSource
+import com.example.data.lyrics.sources.LyricsOvhLyricsSource
+import com.example.data.lyrics.sources.NetEaseLyricsSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,6 +78,11 @@ class LyricsPipeline(
     private const val TAG = "LyricsPipeline"
     private val queueSemaphore = Semaphore(2) // Max 2 concurrent requests
   }
+
+  private val netEaseSource = NetEaseLyricsSource()
+  private val lyricsOvhSource = LyricsOvhLyricsSource()
+  private val geniusSource = GeniusLyricsSource(context)
+  val geminiSource = GeminiLyricsSource(context)
 
   private val _debugInfo = MutableStateFlow(LyricsDebugInfo())
   val debugInfo: StateFlow<LyricsDebugInfo> = _debugInfo.asStateFlow()
@@ -457,8 +466,82 @@ class LyricsPipeline(
       }
     }
 
-    // Fallback 1: Sidecar .lrc file next to the audio file
-    if (foundSynced == null && foundPlain == null && song.filePath != null) {
+    // Step f: NetEase Cloud Music (synced LRC endpoints)
+    if (foundSynced == null) {
+      try {
+        val netEaseResult = netEaseSource.fetchLyrics(
+          cleanedTitle = cleanedTitle,
+          effectiveArtist = effectiveArtist,
+          effectiveAlbum = effectiveAlbum,
+          durationSec = durationSec,
+          filePath = song.filePath
+        ) { step ->
+          steps.add(step)
+          currentDebug = currentDebug.copy(steps = steps.toList())
+          publishDebug(currentDebug)
+        }
+        if (netEaseResult != null) {
+          if (!netEaseResult.syncedLyrics.isNullOrBlank()) {
+            foundSynced = netEaseResult.syncedLyrics
+            foundSource = netEaseResult.sourceName ?: "NetEase Cloud Music"
+          } else if (!netEaseResult.plainLyrics.isNullOrBlank() && foundPlain == null) {
+            foundPlain = netEaseResult.plainLyrics
+            foundSource = netEaseResult.sourceName ?: "NetEase Cloud Music (Plain)"
+          }
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "NetEase source failed", e)
+      }
+    }
+
+    // Step g: lyrics.ovh (plain lyrics fallback)
+    if (foundSynced == null && foundPlain == null && effectiveArtist != null) {
+      try {
+        val ovhResult = lyricsOvhSource.fetchLyrics(
+          cleanedTitle = cleanedTitle,
+          effectiveArtist = effectiveArtist,
+          effectiveAlbum = effectiveAlbum,
+          durationSec = durationSec,
+          filePath = song.filePath
+        ) { step ->
+          steps.add(step)
+          currentDebug = currentDebug.copy(steps = steps.toList())
+          publishDebug(currentDebug)
+        }
+        if (ovhResult?.plainLyrics != null) {
+          foundPlain = ovhResult.plainLyrics
+          foundSource = ovhResult.sourceName ?: "lyrics.ovh"
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "lyrics.ovh source failed", e)
+      }
+    }
+
+    // Step h: Genius API (if user entered Genius key)
+    if (foundSynced == null && foundPlain == null) {
+      try {
+        val geniusResult = geniusSource.fetchLyrics(
+          cleanedTitle = cleanedTitle,
+          effectiveArtist = effectiveArtist,
+          effectiveAlbum = effectiveAlbum,
+          durationSec = durationSec,
+          filePath = song.filePath
+        ) { step ->
+          steps.add(step)
+          currentDebug = currentDebug.copy(steps = steps.toList())
+          publishDebug(currentDebug)
+        }
+        if (geniusResult?.plainLyrics != null) {
+          foundPlain = geniusResult.plainLyrics
+          foundSource = geniusResult.sourceName ?: "Genius"
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Genius source failed", e)
+      }
+    }
+
+    // Step i: Sidecar .lrc file next to the audio file
+    if (foundSynced == null && song.filePath != null) {
       try {
         val audioFile = File(song.filePath)
         val lrcFile = File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc")
@@ -471,7 +554,61 @@ class LyricsPipeline(
             steps.add(LyricsDebugStep("Sidecar .lrc", lrcFile.absolutePath, 200, "Loaded ${parsed.size} lines from .lrc"))
           }
         }
-      } catch (_: Exception) {}
+      } catch (e: Exception) {
+        Log.e(TAG, "Sidecar .lrc check error", e)
+      }
+    }
+
+    // Step j: Embedded USLT/SYLT metadata from audio file
+    if (foundSynced == null && foundPlain == null && song.filePath != null) {
+      try {
+        val mmr = MediaMetadataRetriever()
+        mmr.setDataSource(song.filePath)
+        val embeddedLyrics = try {
+          mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_WRITER)
+            ?: mmr.extractMetadata(101)
+            ?: ""
+        } catch (_: Exception) {
+          ""
+        }
+        mmr.release()
+        if (!embeddedLyrics.isNullOrBlank()) {
+          val hasTimestamps = LrcParser.hasLrcTimestamps(embeddedLyrics)
+          if (hasTimestamps) {
+            foundSynced = embeddedLyrics
+            foundSource = "Embedded Audio Metadata (Synced)"
+          } else {
+            foundPlain = embeddedLyrics
+            foundSource = "Embedded Audio Metadata (Plain)"
+          }
+          steps.add(LyricsDebugStep("Embedded Metadata", song.filePath, 200, "Found embedded lyrics (${embeddedLyrics.length} chars)"))
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Embedded lyrics extraction error", e)
+      }
+    }
+
+    // Step k: Gemini AI Fallback (ONLY if user entered key)
+    if (foundSynced == null && song.filePath != null) {
+      try {
+        val geminiResult = geminiSource.fetchLyrics(
+          cleanedTitle = cleanedTitle,
+          effectiveArtist = effectiveArtist,
+          effectiveAlbum = effectiveAlbum,
+          durationSec = durationSec,
+          filePath = song.filePath
+        ) { step ->
+          steps.add(step)
+          currentDebug = currentDebug.copy(steps = steps.toList())
+          publishDebug(currentDebug)
+        }
+        if (geminiResult?.syncedLyrics != null) {
+          foundSynced = geminiResult.syncedLyrics
+          foundSource = "AI-generated"
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Gemini source failed", e)
+      }
     }
 
     // Save final result to Room DB
@@ -835,4 +972,63 @@ class LyricsPipeline(
       s
     }
   }
+
+  suspend fun generateLyricsWithGemini(song: Song): Boolean = withContext(Dispatchers.IO) {
+    if (song.filePath == null) return@withContext false
+    val file = File(song.filePath)
+    if (!file.exists()) return@withContext false
+
+    val durationSec = (song.durationMs / 1000).toInt()
+    val steps = mutableListOf<LyricsDebugStep>()
+    val result = geminiSource.generateLyricsFromAudio(file, durationSec, { steps.add(it) })
+    if (result?.syncedLyrics != null) {
+      songDao.updateLyricsSuccess(
+        songId = song.id,
+        lyrics = result.syncedLyrics,
+        isSynced = true,
+        source = "AI-generated",
+        fetchedAt = System.currentTimeMillis()
+      )
+      publishDebug(LyricsDebugInfo(
+        songId = song.id,
+        rawTitle = song.title,
+        steps = steps,
+        finalResult = "SYNCED",
+        finalSource = "AI-generated"
+      ))
+      return@withContext true
+    }
+    false
+  }
+
+  suspend fun autoSyncLyricsWithGemini(song: Song, plainLyrics: String): String? = withContext(Dispatchers.IO) {
+    if (song.filePath == null) {
+      throw IllegalStateException("Audio file path not found for '${song.title}'")
+    }
+    val file = File(song.filePath)
+    if (!file.exists()) {
+      throw IllegalStateException("Audio file does not exist on disk (${file.absolutePath})")
+    }
+    val durationSec = (song.durationMs / 1000).toInt()
+    val steps = mutableListOf<LyricsDebugStep>()
+    val synced = geminiSource.autoSyncLyricsWithAudio(file, plainLyrics, durationSec, { steps.add(it) })
+    if (synced != null) {
+      songDao.updateLyricsSuccess(
+        songId = song.id,
+        lyrics = synced,
+        isSynced = true,
+        source = "AI-synced",
+        fetchedAt = System.currentTimeMillis()
+      )
+      publishDebug(LyricsDebugInfo(
+        songId = song.id,
+        rawTitle = song.title,
+        steps = steps,
+        finalResult = "SYNCED",
+        finalSource = "AI-synced"
+      ))
+    }
+    synced
+  }
 }
+

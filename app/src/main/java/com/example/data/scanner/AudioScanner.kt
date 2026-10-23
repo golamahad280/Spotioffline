@@ -3,17 +3,22 @@ package com.example.data.scanner
 import android.content.ContentUris
 import android.content.Context
 import android.media.MediaMetadataRetriever
+import android.media.MediaScannerConnection
 import android.net.Uri
+import android.os.Environment
 import android.provider.MediaStore
 import com.example.data.local.SongDao
 import com.example.data.model.ScanProgress
 import com.example.data.model.Song
 import com.example.data.network.NetworkClient
+import com.example.utils.CrashLogger
 import com.example.utils.ImageUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
@@ -23,40 +28,64 @@ class AudioScanner(
   private val context: Context,
   private val songDao: SongDao
 ) {
+  private val TAG = "AudioScanner"
 
   private val _scanProgress = MutableStateFlow(ScanProgress())
   val scanProgress: StateFlow<ScanProgress> = _scanProgress.asStateFlow()
 
+  // Concurrency limiter: limit parallel image/network jobs to 2
+  private val networkSemaphore = Semaphore(2)
+
+  private val supportedExtensions = setOf("mp3", "m4a", "flac", "wav", "ogg", "opus", "aac")
+
   suspend fun scanDeviceAudio(): Int = withContext(Dispatchers.IO) {
-    _scanProgress.value = ScanProgress(isScanning = true, currentFileName = "Searching for audio files...")
+    _scanProgress.value = ScanProgress(isScanning = true, currentFileName = "Preparing audio scan...")
+    CrashLogger.i(TAG, "Starting audio scan")
 
-    val existingSongIds = songDao.getAllSongIds().toSet()
-    val foundSongs = mutableListOf<Song>()
-
-    val projection = arrayOf(
-      MediaStore.Audio.Media._ID,
-      MediaStore.Audio.Media.TITLE,
-      MediaStore.Audio.Media.ARTIST,
-      MediaStore.Audio.Media.ALBUM,
-      MediaStore.Audio.Media.DURATION,
-      MediaStore.Audio.Media.DATA,
-      MediaStore.Audio.Media.YEAR,
-      MediaStore.Audio.Media.TRACK,
-      MediaStore.Audio.Media.SIZE,
-      MediaStore.Audio.Media.DATE_ADDED
-    )
-
-    val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND ${MediaStore.Audio.Media.DURATION} >= 5000"
-    val sortOrder = "${MediaStore.Audio.Media.DATE_ADDED} DESC"
+    var totalAddedOrUpdated = 0
 
     try {
-      val cursor = context.contentResolver.query(
-        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-        projection,
-        selection,
-        null,
-        sortOrder
+      // 1. Walk common audio folders and trigger MediaScannerConnection for unindexed audio files
+      triggerMediaScannerOnCommonFolders()
+
+      // 2. Incremental scan: cleanup dead songs from DB
+      cleanupDeadSongs()
+
+      // 3. Query MediaStore.Audio.Media without IS_MUSIC, duration >= 15s, excluding ringtone/alarm/notification
+      val projection = arrayOf(
+        MediaStore.Audio.Media._ID,
+        MediaStore.Audio.Media.TITLE,
+        MediaStore.Audio.Media.ARTIST,
+        MediaStore.Audio.Media.ALBUM,
+        MediaStore.Audio.Media.DURATION,
+        MediaStore.Audio.Media.DATA,
+        MediaStore.Audio.Media.YEAR,
+        MediaStore.Audio.Media.TRACK,
+        MediaStore.Audio.Media.SIZE,
+        MediaStore.Audio.Media.DATE_ADDED
       )
+
+      val selection = "${MediaStore.Audio.Media.DURATION} >= 15000 AND " +
+          "${MediaStore.Audio.Media.IS_RINGTONE} == 0 AND " +
+          "${MediaStore.Audio.Media.IS_NOTIFICATION} == 0 AND " +
+          "${MediaStore.Audio.Media.IS_ALARM} == 0"
+      val sortOrder = "${MediaStore.Audio.Media.DATE_ADDED} DESC"
+
+      val cursor = try {
+        context.contentResolver.query(
+          MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+          projection,
+          selection,
+          null,
+          sortOrder
+        )
+      } catch (e: Exception) {
+        CrashLogger.e(TAG, "Failed querying MediaStore", e)
+        null
+      }
+
+      val pendingBatch = mutableListOf<Song>()
+      val BATCH_SIZE = 50
 
       cursor?.use { c ->
         val idCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
@@ -64,16 +93,17 @@ class AudioScanner(
         val artistCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
         val albumCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
         val durationCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
-        val dataCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
+        val dataCol = c.getColumnIndex(MediaStore.Audio.Media.DATA)
         val yearCol = c.getColumnIndex(MediaStore.Audio.Media.YEAR)
         val trackCol = c.getColumnIndex(MediaStore.Audio.Media.TRACK)
         val sizeCol = c.getColumnIndex(MediaStore.Audio.Media.SIZE)
         val dateAddedCol = c.getColumnIndex(MediaStore.Audio.Media.DATE_ADDED)
 
-        val total = c.count
-        var scanned = 0
+        val totalCount = c.count
+        var scannedCount = 0
 
         while (c.moveToNext()) {
+          scannedCount++
           val mediaId = c.getLong(idCol)
           val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, mediaId).toString()
           val filePath = if (dataCol != -1) c.getString(dataCol) else null
@@ -86,71 +116,240 @@ class AudioScanner(
           val size = if (sizeCol != -1) c.getLong(sizeCol) else 0L
           val dateAdded = if (dateAddedCol != -1) c.getLong(dateAddedCol) * 1000L else System.currentTimeMillis()
 
-          scanned++
           _scanProgress.value = ScanProgress(
-            totalFiles = total,
-            scannedFiles = scanned,
+            totalFiles = totalCount,
+            scannedFiles = scannedCount,
             currentFileName = rawTitle,
             isScanning = true
           )
 
-          // Clean title and artist if needed
-          val (cleanedTitle, cleanedArtist) = cleanMetadata(rawTitle, rawArtist, filePath)
+          // Check if song already exists in Room database
+          val existingSong = songDao.getSongById(contentUri)
 
-          // If already in DB, keep existing lyrics and cover
-          if (existingSongIds.contains(contentUri)) {
-            continue
+          if (existingSong != null) {
+            // Respect user locks & existing metadata
+            val finalTitle = if (existingSong.titleLocked) existingSong.title else {
+              val (cleanedT, _) = cleanMetadata(rawTitle, rawArtist, filePath)
+              cleanedT
+            }
+            val finalArtist = if (existingSong.artistLocked) existingSong.artist else {
+              val (_, cleanedA) = cleanMetadata(rawTitle, rawArtist, filePath)
+              cleanedA
+            }
+            val finalAlbumArt = if (existingSong.coverLocked || !existingSong.albumArtUri.isNullOrBlank()) {
+              existingSong.albumArtUri
+            } else {
+              extractEmbeddedArt(contentUri, filePath, mediaId)
+            }
+
+            val updatedSong = existingSong.copy(
+              title = finalTitle,
+              artist = finalArtist,
+              album = if (rawAlbum.contains("<unknown>", true)) "Single" else rawAlbum,
+              durationMs = duration,
+              filePath = filePath ?: existingSong.filePath,
+              albumArtUri = finalAlbumArt,
+              year = year,
+              trackNumber = track,
+              fileSize = size
+            )
+            pendingBatch.add(updatedSong)
+          } else {
+            // New Song
+            val (cleanedTitle, cleanedArtist) = cleanMetadata(rawTitle, rawArtist, filePath)
+            val embeddedArt = extractEmbeddedArt(contentUri, filePath, mediaId)
+
+            val newSong = Song(
+              id = contentUri,
+              title = cleanedTitle,
+              artist = cleanedArtist,
+              album = if (rawAlbum.contains("<unknown>", true)) "Single" else rawAlbum,
+              durationMs = duration,
+              uriString = contentUri,
+              filePath = filePath,
+              albumArtUri = embeddedArt,
+              year = year,
+              trackNumber = track,
+              fileSize = size,
+              addedAt = dateAdded,
+              isHidden = false,
+              titleLocked = false,
+              artistLocked = false,
+              coverLocked = false
+            )
+            pendingBatch.add(newSong)
           }
 
-          // Read embedded artwork if available
-          var embeddedArtUri: String? = null
-          try {
-            val retriever = MediaMetadataRetriever()
-            if (filePath != null && File(filePath).exists()) {
-              retriever.setDataSource(filePath)
-            } else {
-              retriever.setDataSource(context, Uri.parse(contentUri))
-            }
-            val embeddedPic = retriever.embeddedPicture
-            if (embeddedPic != null && embeddedPic.isNotEmpty()) {
-              embeddedArtUri = ImageUtils.saveArtworkBytes(context, embeddedPic, "media_$mediaId")
-            }
-            retriever.release()
-          } catch (_: Exception) {}
+          // Batch insert 50 at a time for responsive UI
+          if (pendingBatch.size >= BATCH_SIZE) {
+            songDao.insertSongs(pendingBatch.toList())
+            totalAddedOrUpdated += pendingBatch.size
+            pendingBatch.clear()
+          }
+        }
+      }
 
-          val song = Song(
-            id = contentUri,
-            title = cleanedTitle,
-            artist = cleanedArtist,
-            album = if (rawAlbum.contains("<unknown>", true)) "Single" else rawAlbum,
-            durationMs = duration,
-            uriString = contentUri,
-            filePath = filePath,
-            albumArtUri = embeddedArtUri,
-            year = year,
-            trackNumber = track,
-            fileSize = size,
-            addedAt = dateAdded
+      // Insert any remaining items in pending batch
+      if (pendingBatch.isNotEmpty()) {
+        songDao.insertSongs(pendingBatch.toList())
+        totalAddedOrUpdated += pendingBatch.size
+        pendingBatch.clear()
+      }
+
+      _scanProgress.value = ScanProgress(
+        totalFiles = totalAddedOrUpdated,
+        scannedFiles = totalAddedOrUpdated,
+        currentFileName = "Scan completed! Found $totalAddedOrUpdated tracks.",
+        isScanning = false
+      )
+      CrashLogger.i(TAG, "Audio scan completed successfully. Processed: $totalAddedOrUpdated tracks")
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Scan failed with exception", e)
+      _scanProgress.value = ScanProgress(
+        totalFiles = 0,
+        scannedFiles = 0,
+        currentFileName = "Scan finished with errors.",
+        isScanning = false
+      )
+    }
+
+    totalAddedOrUpdated
+  }
+
+  private fun extractEmbeddedArt(contentUri: String, filePath: String?, mediaId: Long): String? {
+    var embeddedArtUri: String? = null
+    var retriever: MediaMetadataRetriever? = null
+    try {
+      retriever = MediaMetadataRetriever()
+      if (filePath != null && File(filePath).exists()) {
+        retriever.setDataSource(filePath)
+      } else {
+        retriever.setDataSource(context, Uri.parse(contentUri))
+      }
+      val embeddedPic = retriever.embeddedPicture
+      if (embeddedPic != null && embeddedPic.isNotEmpty()) {
+        embeddedArtUri = kotlinx.coroutines.runBlocking {
+          ImageUtils.saveArtworkBytes(context, embeddedPic, "media_$mediaId")
+        }
+      }
+    } catch (oom: OutOfMemoryError) {
+      CrashLogger.e(TAG, "OOM extracting embedded picture for $contentUri", oom)
+    } catch (e: Exception) {
+      // Ignore audio file without embedded artwork
+    } finally {
+      try {
+        retriever?.release()
+      } catch (_: Exception) {}
+    }
+    return embeddedArtUri
+  }
+
+  private suspend fun cleanupDeadSongs() {
+    try {
+      val allIds = songDao.getAllSongIds()
+      val deadIds = mutableListOf<String>()
+
+      for (id in allIds) {
+        val song = songDao.getSongById(id) ?: continue
+
+        // Demo tracks synthesized internally shouldn't be deleted
+        if (id.startsWith("demo_track_")) {
+          continue
+        }
+
+        var fileExists = false
+        if (song.filePath != null) {
+          try {
+            fileExists = File(song.filePath).exists()
+          } catch (_: Exception) {}
+        }
+
+        if (!fileExists) {
+          // Verify if ContentResolver can still open file descriptor
+          try {
+            val pfd = context.contentResolver.openFileDescriptor(Uri.parse(song.uriString), "r")
+            if (pfd != null) {
+              fileExists = true
+              pfd.close()
+            }
+          } catch (_: Exception) {
+            fileExists = false
+          }
+        }
+
+        if (!fileExists) {
+          deadIds.add(id)
+        }
+      }
+
+      if (deadIds.isNotEmpty()) {
+        CrashLogger.i(TAG, "Removing ${deadIds.size} missing/deleted songs from database")
+        songDao.deleteSongsByIds(deadIds)
+      }
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Error cleaning up dead songs", e)
+    }
+  }
+
+  private fun triggerMediaScannerOnCommonFolders() {
+    try {
+      val dirsToScan = mutableListOf<File>()
+
+      fun addDirIfValid(dir: File?) {
+        if (dir != null && dir.exists() && dir.isDirectory) {
+          dirsToScan.add(dir)
+        }
+      }
+
+      addDirIfValid(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC))
+      addDirIfValid(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS))
+      addDirIfValid(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PODCASTS))
+      addDirIfValid(Environment.getExternalStoragePublicDirectory("Recordings"))
+      addDirIfValid(Environment.getExternalStoragePublicDirectory("Audiobooks"))
+      addDirIfValid(File(Environment.getExternalStorageDirectory(), "Bluetooth"))
+
+      // Messenger audio folders
+      addDirIfValid(File(Environment.getExternalStorageDirectory(), "WhatsApp/Media/WhatsApp Audio"))
+      addDirIfValid(File(Environment.getExternalStorageDirectory(), "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Audio"))
+      addDirIfValid(File(Environment.getExternalStorageDirectory(), "Telegram/Telegram Audio"))
+
+      val filesToScan = mutableListOf<String>()
+      for (dir in dirsToScan) {
+        collectAudioFiles(dir, filesToScan, maxDepth = 4)
+      }
+
+      if (filesToScan.isNotEmpty()) {
+        CrashLogger.i(TAG, "Requesting MediaScannerConnection for ${filesToScan.size} audio files on disk")
+        // Batch scanFile requests in chunks of 50
+        filesToScan.chunked(50).forEach { chunk ->
+          MediaScannerConnection.scanFile(
+            context,
+            chunk.toTypedArray(),
+            null,
+            null
           )
-          foundSongs.add(song)
         }
       }
     } catch (e: Exception) {
-      // Permission or query exception
+      CrashLogger.w(TAG, "Error walking directories for MediaScanner", e)
     }
+  }
 
-    if (foundSongs.isNotEmpty()) {
-      songDao.insertSongs(foundSongs)
-    }
-
-    _scanProgress.value = ScanProgress(
-      totalFiles = foundSongs.size,
-      scannedFiles = foundSongs.size,
-      currentFileName = "Scan completed! Added ${foundSongs.size} tracks.",
-      isScanning = false
-    )
-
-    foundSongs.size
+  private fun collectAudioFiles(dir: File, result: MutableList<String>, maxDepth: Int) {
+    if (maxDepth <= 0 || result.size > 1000) return
+    try {
+      val files = dir.listFiles() ?: return
+      for (file in files) {
+        if (file.isDirectory && !file.name.startsWith(".")) {
+          collectAudioFiles(file, result, maxDepth - 1)
+        } else if (file.isFile) {
+          val ext = file.extension.lowercase()
+          if (supportedExtensions.contains(ext)) {
+            result.add(file.absolutePath)
+          }
+        }
+      }
+    } catch (_: Exception) {}
   }
 
   suspend fun importAudioUri(uri: Uri): Song? = withContext(Dispatchers.IO) {
@@ -192,39 +391,35 @@ class AudioScanner(
       songDao.insertSong(song)
       song
     } catch (e: Exception) {
+      CrashLogger.e(TAG, "Failed importing audio URI $uri", e)
       null
     }
   }
 
+  val coverPipeline = com.example.data.cover.CoverPipeline(context, songDao)
+
   suspend fun autoFetchMetadataForSong(song: Song): Song = withContext(Dispatchers.IO) {
     var updatedSong = song
 
-    // 1. Fetch Synced Lyrics via robust LyricsPipeline
+    // 1. Fetch Synced Lyrics via robust LyricsPipeline (within concurrency limit)
     try {
-      val lyricsPipeline = com.example.data.lyrics.LyricsPipeline(context, songDao)
-      lyricsPipeline.fetchLyricsForSong(song)
-      songDao.getSongById(song.id)?.let { updatedSong = it }
-    } catch (_: Exception) {}
+      networkSemaphore.withPermit {
+        val lyricsPipeline = com.example.data.lyrics.LyricsPipeline(context, songDao)
+        lyricsPipeline.fetchLyricsForSong(song)
+        songDao.getSongById(song.id)?.let { updatedSong = it }
+      }
+    } catch (e: Exception) {
+      CrashLogger.w(TAG, "Error in auto-fetch lyrics for ${song.title}", e)
+    }
 
-    // 2. Fetch High-Res Album Cover from iTunes if not present
-    if (updatedSong.albumArtUri.isNullOrBlank()) {
+    // 2. Fetch High-Res Album Cover via CoverPipeline if not present and cover not locked
+    if (updatedSong.albumArtUri.isNullOrBlank() && !updatedSong.coverLocked) {
       try {
-        val query = "${updatedSong.artist} ${updatedSong.title}"
-        val res = NetworkClient.iTunesService.searchSong(query)
-        if (res.isSuccessful && res.body()?.results?.isNotEmpty() == true) {
-          val track = res.body()!!.results.first()
-          val rawArt = track.artworkUrl100
-          if (!rawArt.isNullOrBlank()) {
-            // Replace 100x100bb with high-res 1200x1200bb or 3000x3000bb
-            val highResUrl = rawArt.replace("100x100bb", "1200x1200bb")
-            val downloadedUri = downloadAndCacheImage(highResUrl, "itunes_${song.id.hashCode()}")
-            if (downloadedUri != null) {
-              songDao.updateAlbumArt(song.id, downloadedUri)
-              updatedSong = updatedSong.copy(albumArtUri = downloadedUri)
-            }
-          }
-        }
-      } catch (_: Exception) {}
+        coverPipeline.autoFetchCoverForSong(updatedSong)
+        songDao.getSongById(song.id)?.let { updatedSong = it }
+      } catch (e: Exception) {
+        CrashLogger.w(TAG, "Error fetching cover via CoverPipeline for ${song.title}", e)
+      }
     }
 
     updatedSong
@@ -247,7 +442,11 @@ class AudioScanner(
           return@withContext Uri.fromFile(file).toString()
         }
       }
-    } catch (_: Exception) {}
+    } catch (oom: OutOfMemoryError) {
+      CrashLogger.e(TAG, "OOM downloading image $imageUrl", oom)
+    } catch (e: Exception) {
+      CrashLogger.w(TAG, "Failed downloading image $imageUrl", e)
+    }
     null
   }
 
@@ -255,7 +454,6 @@ class AudioScanner(
     var title = rawTitle.trim()
     var artist = rawArtist.trim()
 
-    // Clean common junk words from title
     val junkPatterns = listOf(
       Regex("\\[.*?\\]"),
       Regex("\\(.*?Official.*?\\)", RegexOption.IGNORE_CASE),
@@ -273,7 +471,6 @@ class AudioScanner(
       title = title.replace(p, "").trim()
     }
 
-    // If title has "Artist - Track"
     if (title.contains(" - ") && (artist.contains("<unknown>", true) || artist.isBlank())) {
       val parts = title.split(" - ", limit = 2)
       artist = parts[0].trim()

@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.content.Context
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,16 +18,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Equalizer
-import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -37,6 +45,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,12 +54,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.BuildConfig
+import com.example.data.model.Song
+import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
 import com.example.ui.theme.SpotifyBlack
 import com.example.ui.theme.SpotifyCardElevated
 import com.example.ui.theme.SpotifyDivider
@@ -58,10 +73,17 @@ import com.example.ui.theme.SpotifyGreen
 import com.example.ui.theme.SpotifyTextMuted
 import com.example.ui.theme.SpotifyTextSecondary
 import com.example.ui.theme.SpotifyWhite
+import com.example.utils.CrashLogger
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun SettingsScreen(
   totalSongs: Int,
+  hiddenSongs: List<Song> = emptyList(),
+  onRestoreSong: (String) -> Unit = {},
   onBack: () -> Unit,
   onScanClick: () -> Unit,
   onClearLyricsCache: () -> Unit,
@@ -78,6 +100,9 @@ fun SettingsScreen(
   var crossfadeEnabled by remember { mutableStateOf(false) }
   var customGeminiKey by remember { mutableStateOf(prefs.getString("gemini_api_key", "") ?: "") }
   var keyTestStatus by remember { mutableStateOf<String?>(null) }
+
+  var showCrashLogsDialog by remember { mutableStateOf(false) }
+  var showHiddenSongsDialog by remember { mutableStateOf(false) }
 
   LazyColumn(
     modifier = modifier
@@ -173,6 +198,64 @@ fun SettingsScreen(
               Text("Clear Covers", color = SpotifyWhite, fontSize = 12.sp)
             }
           }
+
+          Spacer(modifier = Modifier.height(12.dp))
+          HorizontalDivider(color = SpotifyDivider)
+          Spacer(modifier = Modifier.height(10.dp))
+
+          // Hidden Songs Row
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable { showHiddenSongsDialog = true }
+              .padding(vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Icon(imageVector = Icons.Default.VisibilityOff, contentDescription = null, tint = SpotifyWhite)
+              Spacer(modifier = Modifier.width(10.dp))
+              Text("Hidden Songs", color = SpotifyWhite, fontSize = 14.sp)
+            }
+            Text(
+              if (hiddenSongs.isEmpty()) "0 hidden >" else "${hiddenSongs.size} hidden >",
+              color = if (hiddenSongs.isNotEmpty()) SpotifyGreen else SpotifyTextSecondary,
+              fontSize = 13.sp
+            )
+          }
+        }
+      }
+    }
+
+    // Stability & Crash Log Section
+    item {
+      SectionTitle("STABILITY & LOGS")
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(12.dp))
+          .background(SpotifyCardElevated)
+          .padding(16.dp)
+      ) {
+        Column {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable { showCrashLogsDialog = true }
+              .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Icon(imageVector = Icons.Default.BugReport, contentDescription = null, tint = SpotifyGreen)
+              Spacer(modifier = Modifier.width(10.dp))
+              Column {
+                Text("Crash & Stability Log", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text("View stack traces, exit reasons & ring buffer", color = SpotifyTextSecondary, fontSize = 11.sp)
+              }
+            }
+            Text("View Logs >", color = SpotifyGreen, fontSize = 13.sp)
+          }
         }
       }
     }
@@ -212,7 +295,7 @@ fun SettingsScreen(
           Spacer(modifier = Modifier.height(4.dp))
           OutlinedTextField(
             value = customGeminiKey,
-            onValueChange = { 
+            onValueChange = {
               customGeminiKey = it
               prefs.edit().putString("gemini_api_key", it).apply()
             },
@@ -221,22 +304,74 @@ fun SettingsScreen(
             modifier = Modifier.fillMaxWidth()
           )
 
+          val scope = androidx.compose.runtime.rememberCoroutineScope()
+          var isTestingKey by remember { mutableStateOf(false) }
+
           Spacer(modifier = Modifier.height(10.dp))
-          Button(
-            onClick = {
-              val hasKey = customGeminiKey.isNotBlank() || BuildConfig.BUILD_TYPE.isNotEmpty()
-              keyTestStatus = if (hasKey) "✓ Connected to Gemini AI engine" else "No key entered"
-            },
-            colors = ButtonDefaults.buttonColors(containerColor = SpotifyDivider),
-            modifier = Modifier.align(Alignment.End)
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
           ) {
-            Text("Test Connection", color = SpotifyWhite, fontSize = 12.sp)
+            if (isTestingKey) {
+              androidx.compose.material3.CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = SpotifyGreen,
+                strokeWidth = 2.dp
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+            }
+            Button(
+              onClick = {
+                if (customGeminiKey.isBlank()) {
+                  keyTestStatus = "No key entered. Please enter a valid Gemini API key."
+                  return@Button
+                }
+                isTestingKey = true
+                keyTestStatus = "Connecting to Gemini API..."
+                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                  try {
+                    val client = okhttp3.OkHttpClient.Builder()
+                      .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                      .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                      .build()
+                    val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${customGeminiKey.trim()}"
+                    val bodyJson = "{\"contents\":[{\"parts\":[{\"text\":\"ping\"}]}]}"
+                    val req = okhttp3.Request.Builder()
+                      .url(url)
+                      .post(okhttp3.RequestBody.create("application/json".toMediaType(), bodyJson))
+                      .build()
+                    val res = client.newCall(req).execute()
+                    val code = res.code
+                    val bodyStr = res.body?.string() ?: ""
+                    isTestingKey = false
+                    if (res.isSuccessful) {
+                      keyTestStatus = "✓ Connected to Gemini AI engine successfully"
+                    } else {
+                      val errSnippet = try {
+                        org.json.JSONObject(bodyStr).optJSONObject("error")?.optString("message") ?: bodyStr
+                      } catch (_: Exception) {
+                        bodyStr
+                      }
+                      keyTestStatus = "✗ Error (HTTP $code): ${errSnippet.take(120)}"
+                    }
+                  } catch (e: Exception) {
+                    isTestingKey = false
+                    keyTestStatus = "✗ Connection failed: ${e.message}"
+                  }
+                }
+              },
+              colors = ButtonDefaults.buttonColors(containerColor = SpotifyDivider),
+              enabled = !isTestingKey
+            ) {
+              Text("Test Connection", color = SpotifyWhite, fontSize = 12.sp)
+            }
           }
 
           if (keyTestStatus != null) {
             Text(
               text = keyTestStatus!!,
-              color = SpotifyGreen,
+              color = if (keyTestStatus!!.startsWith("✓")) SpotifyGreen else Color(0xFFFF5252),
               fontSize = 12.sp,
               fontWeight = FontWeight.Medium,
               modifier = Modifier.padding(top = 4.dp)
@@ -338,7 +473,7 @@ fun SettingsScreen(
       }
     }
 
-    // App Info
+    // App Info & Build Stamp
     item {
       Spacer(modifier = Modifier.height(24.dp))
       Column(
@@ -347,9 +482,265 @@ fun SettingsScreen(
       ) {
         Text("SpotiOffline v1.0", color = SpotifyTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         Text("Spotify-like Offline Music Player with Synced Lyrics", color = SpotifyTextMuted, fontSize = 11.sp)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text("Build: ${BuildConfig.BUILD_STAMP}", color = SpotifyTextMuted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
       }
     }
   }
+
+  // Crash & Stability Logs Dialog
+  if (showCrashLogsDialog) {
+    CrashLogsDialog(
+      onDismiss = { showCrashLogsDialog = false }
+    )
+  }
+
+  // Hidden Songs Dialog
+  if (showHiddenSongsDialog) {
+    HiddenSongsDialog(
+      hiddenSongs = hiddenSongs,
+      onRestoreSong = onRestoreSong,
+      onDismiss = { showHiddenSongsDialog = false }
+    )
+  }
+}
+
+@Composable
+fun CrashLogsDialog(onDismiss: () -> Unit) {
+  val context = LocalContext.current
+  var logs by remember { mutableStateOf(CrashLogger.getLogs(context)) }
+  var selectedFile by remember { mutableStateOf<File?>(null) }
+  var selectedFileContent by remember { mutableStateOf<String?>(null) }
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Text(
+          text = if (selectedFile != null) selectedFile!!.name else "Crash & Stability Logs",
+          color = SpotifyWhite,
+          fontSize = 16.sp,
+          fontWeight = FontWeight.Bold,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f)
+        )
+        IconButton(onClick = onDismiss) {
+          Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = SpotifyWhite)
+        }
+      }
+    },
+    text = {
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(350.dp)
+      ) {
+        if (selectedFile != null && selectedFileContent != null) {
+          Column(
+            modifier = Modifier
+              .fillMaxSize()
+              .verticalScroll(rememberScrollState())
+          ) {
+            Text(
+              text = selectedFileContent!!,
+              color = SpotifyWhite,
+              fontSize = 11.sp,
+              fontFamily = FontFamily.Monospace
+            )
+          }
+        } else {
+          if (logs.isEmpty()) {
+            Box(
+              modifier = Modifier.fillMaxSize(),
+              contentAlignment = Alignment.Center
+            ) {
+              Text("No crash or stability logs recorded.", color = SpotifyTextSecondary, fontSize = 13.sp)
+            }
+          } else {
+            LazyColumn(
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+              modifier = Modifier.fillMaxSize()
+            ) {
+              items(logs) { file ->
+                val dateStr = SimpleDateFormat("MMM dd, HH:mm:ss", Locale.getDefault()).format(Date(file.lastModified()))
+                Row(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(SpotifyBlack)
+                    .clickable {
+                      selectedFile = file
+                      selectedFileContent = try { file.readText() } catch (e: Exception) { "Error reading file: ${e.message}" }
+                    }
+                    .padding(10.dp),
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                      text = file.name,
+                      color = SpotifyWhite,
+                      fontSize = 13.sp,
+                      fontWeight = FontWeight.Medium,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                      text = "$dateStr • ${file.length()} bytes",
+                      color = SpotifyTextSecondary,
+                      fontSize = 11.sp
+                    )
+                  }
+                  Text("View >", color = SpotifyGreen, fontSize = 12.sp)
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {
+      if (selectedFile != null) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Button(
+            onClick = {
+              val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, selectedFileContent ?: "")
+                putExtra(Intent.EXTRA_SUBJECT, "Crash Log: ${selectedFile!!.name}")
+              }
+              context.startActivity(Intent.createChooser(sendIntent, "Share Crash Log"))
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen)
+          ) {
+            Icon(imageVector = Icons.Default.Share, contentDescription = null, tint = SpotifyBlack, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Share", color = SpotifyBlack, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+          }
+          OutlinedButton(
+            onClick = {
+              selectedFile = null
+              selectedFileContent = null
+            }
+          ) {
+            Text("Back", color = SpotifyWhite, fontSize = 12.sp)
+          }
+        }
+      } else {
+        if (logs.isNotEmpty()) {
+          Button(
+            onClick = {
+              CrashLogger.clearLogs(context)
+              logs = CrashLogger.getLogs(context)
+              Toast.makeText(context, "Logs cleared", Toast.LENGTH_SHORT).show()
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = SpotifyDivider)
+          ) {
+            Icon(imageVector = Icons.Default.Delete, contentDescription = null, tint = SpotifyWhite, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Clear All", color = SpotifyWhite, fontSize = 12.sp)
+          }
+        }
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("Close", color = SpotifyWhite)
+      }
+    },
+    containerColor = SpotifyCardElevated
+  )
+}
+
+@Composable
+fun HiddenSongsDialog(
+  hiddenSongs: List<Song>,
+  onRestoreSong: (String) -> Unit,
+  onDismiss: () -> Unit
+) {
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Text("Hidden Songs (${hiddenSongs.size})", color = SpotifyWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        IconButton(onClick = onDismiss) {
+          Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = SpotifyWhite)
+        }
+      }
+    },
+    text = {
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(300.dp)
+      ) {
+        if (hiddenSongs.isEmpty()) {
+          Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("No hidden songs. Removed songs appear here.", color = SpotifyTextSecondary, fontSize = 13.sp)
+          }
+        } else {
+          LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxSize()
+          ) {
+            items(hiddenSongs) { song ->
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .clip(RoundedCornerShape(8.dp))
+                  .background(SpotifyBlack)
+                  .padding(10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Column(modifier = Modifier.weight(1f)) {
+                  Text(
+                    text = song.title,
+                    color = SpotifyWhite,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                  )
+                  Text(
+                    text = song.artist,
+                    color = SpotifyTextSecondary,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                  )
+                }
+
+                Button(
+                  onClick = { onRestoreSong(song.id) },
+                  colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+                  contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                  modifier = Modifier.height(32.dp)
+                ) {
+                  Text("Restore", color = SpotifyBlack, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {
+      TextButton(onClick = onDismiss) {
+        Text("Done", color = SpotifyGreen, fontWeight = FontWeight.Bold)
+      }
+    },
+    containerColor = SpotifyCardElevated
+  )
 }
 
 @Composable

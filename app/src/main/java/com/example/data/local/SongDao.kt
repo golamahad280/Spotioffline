@@ -10,22 +10,22 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SongDao {
-  @Query("SELECT * FROM songs ORDER BY addedAt DESC")
+  @Query("SELECT * FROM songs WHERE isHidden = 0 ORDER BY addedAt DESC")
   fun getAllSongs(): Flow<List<Song>>
 
-  @Query("SELECT * FROM songs WHERE isLiked = 1 ORDER BY addedAt DESC")
+  @Query("SELECT * FROM songs WHERE isHidden = 0 AND isLiked = 1 ORDER BY addedAt DESC")
   fun getLikedSongs(): Flow<List<Song>>
 
-  @Query("SELECT * FROM songs WHERE lastPlayedAt > 0 ORDER BY lastPlayedAt DESC LIMIT :limit")
+  @Query("SELECT * FROM songs WHERE isHidden = 0 AND lastPlayedAt > 0 ORDER BY lastPlayedAt DESC LIMIT :limit")
   fun getRecentlyPlayed(limit: Int = 20): Flow<List<Song>>
 
-  @Query("SELECT * FROM songs WHERE playCount > 0 ORDER BY playCount DESC LIMIT :limit")
+  @Query("SELECT * FROM songs WHERE isHidden = 0 AND playCount > 0 ORDER BY playCount DESC LIMIT :limit")
   fun getMostPlayed(limit: Int = 20): Flow<List<Song>>
 
-  @Query("SELECT DISTINCT artist FROM songs ORDER BY artist ASC")
+  @Query("SELECT DISTINCT artist FROM songs WHERE isHidden = 0 ORDER BY artist ASC")
   fun getAllArtists(): Flow<List<String>>
 
-  @Query("SELECT * FROM songs WHERE artist = :artist ORDER BY title ASC")
+  @Query("SELECT * FROM songs WHERE isHidden = 0 AND artist = :artist ORDER BY title ASC")
   fun getSongsByArtist(artist: String): Flow<List<Song>>
 
   @Query("SELECT * FROM songs WHERE id = :songId")
@@ -73,6 +73,36 @@ interface SongDao {
   @Query("UPDATE songs SET lyricsText = :lyrics, hasLyrics = 1, isSyncedLyrics = :isSynced, lyricsStatus = 'READY' WHERE id = :songId")
   suspend fun updateLyrics(songId: String, lyrics: String, isSynced: Boolean)
 
+  @Query("SELECT * FROM songs WHERE isHidden = 1 ORDER BY addedAt DESC")
+  fun getHiddenSongs(): Flow<List<Song>>
+
+  @Query("UPDATE songs SET isHidden = :isHidden WHERE id = :songId")
+  suspend fun setHidden(songId: String, isHidden: Boolean)
+
+  @Query("UPDATE songs SET isHidden = :isHidden WHERE id IN (:songIds)")
+  suspend fun setHiddenBatch(songIds: List<String>, isHidden: Boolean)
+
+  @Query("UPDATE songs SET title = :title, artist = :artist, titleLocked = :titleLocked, artistLocked = :artistLocked WHERE id = :songId")
+  suspend fun updateSongMetadataLocked(
+    songId: String,
+    title: String,
+    artist: String,
+    titleLocked: Boolean = true,
+    artistLocked: Boolean = true
+  )
+
+  @Query("UPDATE songs SET albumArtUri = :artUri, coverLocked = :coverLocked WHERE id = :songId")
+  suspend fun updateCustomCoverLocked(songId: String, artUri: String?, coverLocked: Boolean = true)
+
+  @Query("UPDATE songs SET albumArtUri = :artUri, coverSource = :source, coverStatus = 'READY', coverFetchedAt = :fetchedAt WHERE id = :songId")
+  suspend fun updateCoverSuccess(songId: String, artUri: String, source: String, fetchedAt: Long)
+
+  @Query("UPDATE songs SET coverStatus = :status, coverFetchedAt = :fetchedAt, coverSource = :source WHERE id = :songId")
+  suspend fun updateCoverStatus(songId: String, status: String, fetchedAt: Long, source: String? = null)
+
+  @Query("SELECT * FROM songs WHERE coverLocked = 0 AND (albumArtUri IS NULL OR albumArtUri = '') AND ((coverStatus = 'ERROR' AND (:now - coverFetchedAt) > 3600000) OR (coverStatus = 'NOT_FOUND' AND (:now - coverFetchedAt) > 604800000) OR (coverStatus NOT IN ('ERROR', 'NOT_FOUND')))")
+  suspend fun getSongsNeedingCover(now: Long = System.currentTimeMillis()): List<Song>
+
   @Query("UPDATE songs SET albumArtUri = :artUri WHERE id = :songId")
   suspend fun updateAlbumArt(songId: String, artUri: String)
 
@@ -88,9 +118,9 @@ interface SongDao {
   @Query("UPDATE songs SET lyricsText = NULL, hasLyrics = 0, isSyncedLyrics = 0")
   suspend fun clearAllLyrics()
 
-  @Query("UPDATE songs SET albumArtUri = NULL")
+  @Query("UPDATE songs SET albumArtUri = NULL WHERE coverLocked = 0")
   suspend fun clearAllAlbumArt()
 
-  @Query("SELECT COUNT(*) FROM songs")
+  @Query("SELECT COUNT(*) FROM songs WHERE isHidden = 0")
   suspend fun getSongCount(): Int
 }

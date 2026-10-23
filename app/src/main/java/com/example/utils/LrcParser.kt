@@ -1,17 +1,26 @@
 package com.example.utils
 
 import com.example.data.model.LrcLine
+import java.util.Locale
 import java.util.regex.Pattern
 
 object LrcParser {
-  private val TIMESTAMP_PATTERN = Pattern.compile("\\[(\\d{1,2}):(\\d{2})(?:[.:](\\d{1,3}))?\\]")
+  private val TIMESTAMP_PATTERN = Pattern.compile("\\[(\\d{1,3}):(\\d{2})(?:[.:](\\d{1,3}))?\\]")
   private val OFFSET_PATTERN = Pattern.compile("\\[offset:\\s*([+-]?\\d+)\\]", Pattern.CASE_INSENSITIVE)
+
+  fun hasLrcTimestamps(rawText: String?): Boolean {
+    if (rawText.isNullOrBlank()) return false
+    val normalized = rawText.replace("\r\n", "\n").replace("\r", "\n")
+    return TIMESTAMP_PATTERN.matcher(normalized).find()
+  }
 
   fun parse(rawText: String?): List<LrcLine> {
     if (rawText.isNullOrBlank()) return emptyList()
 
     val result = mutableListOf<LrcLine>()
-    val lines = rawText.lines()
+    // Normalize Windows (\r\n) and legacy Mac (\r) line endings
+    val normalized = rawText.replace("\r\n", "\n").replace("\r", "\n")
+    val lines = normalized.lines()
     var fileOffsetMs = 0L
 
     // Check for [offset: +/-ms] tag
@@ -70,6 +79,18 @@ object LrcParser {
     }
 
     return result.sortedBy { it.timestampMs }
+  }
+
+  fun formatToLrc(lines: List<LrcLine>): String {
+    val sb = StringBuilder()
+    for (line in lines.sortedBy { it.timestampMs }) {
+      val totalSec = line.timestampMs / 1000
+      val min = totalSec / 60
+      val sec = totalSec % 60
+      val hundredths = (line.timestampMs % 1000) / 10
+      sb.append(String.format(Locale.US, "[%02d:%02d.%02d] %s\n", min, sec, hundredths, line.text))
+    }
+    return sb.toString().trimEnd()
   }
 
   fun findActiveLineIndex(lines: List<LrcLine>, positionMs: Long, offsetMs: Long = 0L): Int {

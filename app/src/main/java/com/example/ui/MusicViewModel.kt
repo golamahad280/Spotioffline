@@ -332,8 +332,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  fun playShuffle(songs: List<Song>) = playbackManager.playShuffle(songs)
+
   suspend fun generateLyricsWithAi(song: Song): Boolean {
-    val success = lyricsPipeline.generateLyricsWithGemini(song)
+    val success = lyricsPipeline.generateLyricsWithOpenAI(song)
     if (success) {
       playbackManager.refreshCurrentSongFromDb()
     }
@@ -341,7 +343,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   suspend fun autoSyncLyricsWithAi(song: Song, plainLyrics: String): String? {
-    val synced = lyricsPipeline.autoSyncLyricsWithGemini(song, plainLyrics)
+    val synced = lyricsPipeline.autoSyncLyricsWithOpenAI(song, plainLyrics)
     if (synced != null) {
       playbackManager.refreshCurrentSongFromDb()
     }

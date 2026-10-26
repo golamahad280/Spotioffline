@@ -113,12 +113,46 @@ class CoverPipeline(
       }
     }
 
+    // 4. Source: AI Metadata Cleanup Fallback (if OpenAI key set and artist unknown/generic)
+    try {
+      val openAiSource = com.example.data.lyrics.sources.OpenAILyricsSource(context)
+      val aiMeta = openAiSource.cleanMetadataWithAi(
+        filename = song.filePath?.let { File(it).name } ?: song.title,
+        title = song.title,
+        artist = song.artist
+      )
+
+      if (aiMeta != null) {
+        val aiTitle = aiMeta.optString("title", "").trim()
+        val aiArtist = aiMeta.optString("artist", "").trim()
+
+        if (aiTitle.isNotBlank() || aiArtist.isNotBlank()) {
+          applyIdentifiedMetadata(song, if (aiArtist.isNotBlank()) aiArtist else null, null)
+
+          val retryTitle = if (aiTitle.isNotBlank()) aiTitle else cleanedTitle
+          val retryArtist = if (aiArtist.isNotBlank()) aiArtist else effectiveArtist
+
+          val retryItunes = searchITunesCascade(retryTitle, retryArtist, durationSec, customQuery)
+          if (retryItunes != null) {
+            val saved = saveCoverArtworkAndThumb(song.id, retryItunes.imageUrl)
+            if (saved != null) {
+              songDao.updateCoverSuccess(song.id, saved, "iTunes (AI Cleaned)", System.currentTimeMillis())
+              CrashLogger.i(TAG, "Saved iTunes cover via AI metadata cleanup for '${song.title}'")
+              return true
+            }
+          }
+        }
+      }
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "AI metadata cleanup in CoverPipeline failed", e)
+    }
+
     // Not found across all sources
     songDao.updateCoverStatus(
       song.id,
       "NOT_FOUND",
       System.currentTimeMillis(),
-      "Not found across iTunes, Deezer, MusicBrainz"
+      "Not found across iTunes, Deezer, MusicBrainz, OpenAI"
     )
     CrashLogger.w(TAG, "Cover NOT_FOUND for '${song.title}' after trying all sources.")
     return false

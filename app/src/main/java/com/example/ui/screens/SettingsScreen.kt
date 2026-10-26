@@ -98,7 +98,11 @@ fun SettingsScreen(
   var autoFetchLyrics by remember { mutableStateOf(true) }
   var autoFetchCovers by remember { mutableStateOf(true) }
   var crossfadeEnabled by remember { mutableStateOf(false) }
-  var customGeminiKey by remember { mutableStateOf(prefs.getString("gemini_api_key", "") ?: "") }
+  var openAiApiKey by remember { mutableStateOf(prefs.getString("openai_api_key", "") ?: "") }
+  var openAiChatModel by remember { mutableStateOf(prefs.getString("openai_chat_model", "gpt-4o-mini") ?: "gpt-4o-mini") }
+  var openAiTranscriptionModel by remember { mutableStateOf(prefs.getString("openai_transcription_model", "whisper-1") ?: "whisper-1") }
+  var autoAiLyrics by remember { mutableStateOf(prefs.getBoolean("auto_ai_lyrics", false)) }
+  var isKeyVisible by remember { mutableStateOf(false) }
   var keyTestStatus by remember { mutableStateOf<String?>(null) }
 
   var showCrashLogsDialog by remember { mutableStateOf(false) }
@@ -287,21 +291,95 @@ fun SettingsScreen(
 
           Spacer(modifier = Modifier.height(12.dp))
           Text(
-            text = "Google Gemini API Key (Optional)",
+            text = "OpenAI API Key (Optional)",
             color = SpotifyWhite,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold
           )
-          Spacer(modifier = Modifier.height(4.dp))
+          Spacer(modifier = Modifier.height(2.dp))
+          Text(
+            text = "Get a key at platform.openai.com > API keys. A ChatGPT Plus subscription is not an API key; API usage is billed separately.",
+            color = SpotifyTextSecondary,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+          )
+          Spacer(modifier = Modifier.height(6.dp))
           OutlinedTextField(
-            value = customGeminiKey,
+            value = openAiApiKey,
             onValueChange = {
-              customGeminiKey = it
-              prefs.edit().putString("gemini_api_key", it).apply()
+              openAiApiKey = it
+              prefs.edit().putString("openai_api_key", it).apply()
             },
-            placeholder = { Text("Configure in AI Studio Secrets panel", fontSize = 12.sp) },
+            placeholder = { Text("sk-...", fontSize = 12.sp) },
             singleLine = true,
+            visualTransformation = if (isKeyVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            trailingIcon = {
+              IconButton(onClick = { isKeyVisible = !isKeyVisible }) {
+                Text(if (isKeyVisible) "Hide" else "Show", color = SpotifyGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+              }
+            },
             modifier = Modifier.fillMaxWidth()
+          )
+
+          Spacer(modifier = Modifier.height(10.dp))
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+          ) {
+            OutlinedTextField(
+              value = openAiChatModel,
+              onValueChange = {
+                openAiChatModel = it
+                prefs.edit().putString("openai_chat_model", it).apply()
+              },
+              label = { Text("Chat model", fontSize = 11.sp) },
+              singleLine = true,
+              modifier = Modifier.weight(1f)
+            )
+
+            OutlinedTextField(
+              value = openAiTranscriptionModel,
+              onValueChange = {
+                openAiTranscriptionModel = it
+                prefs.edit().putString("openai_transcription_model", it).apply()
+              },
+              label = { Text("Transcription model", fontSize = 11.sp) },
+              singleLine = true,
+              modifier = Modifier.weight(1f)
+            )
+          }
+
+          Spacer(modifier = Modifier.height(10.dp))
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text("Auto AI lyrics (default OFF)", color = SpotifyWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+              Text("Automatically use OpenAI as last lyrics fallback", color = SpotifyTextSecondary, fontSize = 11.sp)
+            }
+            Switch(
+              checked = autoAiLyrics,
+              onCheckedChange = {
+                autoAiLyrics = it
+                prefs.edit().putBoolean("auto_ai_lyrics", it).apply()
+              },
+              colors = SwitchDefaults.colors(
+                checkedThumbColor = SpotifyWhite,
+                checkedTrackColor = SpotifyGreen,
+                uncheckedThumbColor = SpotifyTextSecondary,
+                uncheckedTrackColor = SpotifyDivider
+              )
+            )
+          }
+
+          Spacer(modifier = Modifier.height(8.dp))
+          Text(
+            text = "Notice: Audio files and lyrics prompts are sent to OpenAI when AI metadata cleanup or AI lyrics generation/sync features are used.",
+            color = SpotifyTextSecondary,
+            fontSize = 11.sp,
+            lineHeight = 15.sp
           )
 
           val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -323,38 +401,18 @@ fun SettingsScreen(
             }
             Button(
               onClick = {
-                if (customGeminiKey.isBlank()) {
-                  keyTestStatus = "No key entered. Please enter a valid Gemini API key."
+                if (openAiApiKey.isBlank()) {
+                  keyTestStatus = "No key entered. Please enter a valid OpenAI API key."
                   return@Button
                 }
                 isTestingKey = true
-                keyTestStatus = "Connecting to Gemini API..."
+                keyTestStatus = "Connecting to OpenAI API..."
                 scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                   try {
-                    val client = okhttp3.OkHttpClient.Builder()
-                      .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                      .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                      .build()
-                    val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${customGeminiKey.trim()}"
-                    val bodyJson = "{\"contents\":[{\"parts\":[{\"text\":\"ping\"}]}]}"
-                    val req = okhttp3.Request.Builder()
-                      .url(url)
-                      .post(okhttp3.RequestBody.create("application/json".toMediaType(), bodyJson))
-                      .build()
-                    val res = client.newCall(req).execute()
-                    val code = res.code
-                    val bodyStr = res.body?.string() ?: ""
+                    val openAiSource = com.example.data.lyrics.sources.OpenAILyricsSource(context)
+                    val result = openAiSource.testApiKey(openAiApiKey)
                     isTestingKey = false
-                    if (res.isSuccessful) {
-                      keyTestStatus = "✓ Connected to Gemini AI engine successfully"
-                    } else {
-                      val errSnippet = try {
-                        org.json.JSONObject(bodyStr).optJSONObject("error")?.optString("message") ?: bodyStr
-                      } catch (_: Exception) {
-                        bodyStr
-                      }
-                      keyTestStatus = "✗ Error (HTTP $code): ${errSnippet.take(120)}"
-                    }
+                    keyTestStatus = result.second
                   } catch (e: Exception) {
                     isTestingKey = false
                     keyTestStatus = "✗ Connection failed: ${e.message}"

@@ -10,7 +10,7 @@ import com.example.data.network.ITunesTrack
 import com.example.data.network.LrcLibResponse
 import com.example.data.network.NetworkClient
 import com.example.utils.LrcParser
-import com.example.data.lyrics.sources.GeminiLyricsSource
+import com.example.data.lyrics.sources.OpenAILyricsSource
 import com.example.data.lyrics.sources.GeniusLyricsSource
 import com.example.data.lyrics.sources.LyricsOvhLyricsSource
 import com.example.data.lyrics.sources.NetEaseLyricsSource
@@ -82,7 +82,7 @@ class LyricsPipeline(
   private val netEaseSource = NetEaseLyricsSource()
   private val lyricsOvhSource = LyricsOvhLyricsSource()
   private val geniusSource = GeniusLyricsSource(context)
-  val geminiSource = GeminiLyricsSource(context)
+  val openAiSource = OpenAILyricsSource(context)
 
   private val _debugInfo = MutableStateFlow(LyricsDebugInfo())
   val debugInfo: StateFlow<LyricsDebugInfo> = _debugInfo.asStateFlow()
@@ -588,26 +588,30 @@ class LyricsPipeline(
       }
     }
 
-    // Step k: Gemini AI Fallback (ONLY if user entered key)
+    // Step k: OpenAI AI Fallback (ONLY if user entered key AND enabled Auto AI lyrics)
     if (foundSynced == null && song.filePath != null) {
-      try {
-        val geminiResult = geminiSource.fetchLyrics(
-          cleanedTitle = cleanedTitle,
-          effectiveArtist = effectiveArtist,
-          effectiveAlbum = effectiveAlbum,
-          durationSec = durationSec,
-          filePath = song.filePath
-        ) { step ->
-          steps.add(step)
-          currentDebug = currentDebug.copy(steps = steps.toList())
-          publishDebug(currentDebug)
+      val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+      val autoAiLyrics = prefs.getBoolean("auto_ai_lyrics", false)
+      if (autoAiLyrics) {
+        try {
+          val openAiResult = openAiSource.fetchLyrics(
+            cleanedTitle = cleanedTitle,
+            effectiveArtist = effectiveArtist,
+            effectiveAlbum = effectiveAlbum,
+            durationSec = durationSec,
+            filePath = song.filePath
+          ) { step ->
+            steps.add(step)
+            currentDebug = currentDebug.copy(steps = steps.toList())
+            publishDebug(currentDebug)
+          }
+          if (openAiResult?.syncedLyrics != null) {
+            foundSynced = openAiResult.syncedLyrics
+            foundSource = "AI-generated (OpenAI)"
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "OpenAI source failed", e)
         }
-        if (geminiResult?.syncedLyrics != null) {
-          foundSynced = geminiResult.syncedLyrics
-          foundSource = "AI-generated"
-        }
-      } catch (e: Exception) {
-        Log.e(TAG, "Gemini source failed", e)
       }
     }
 
@@ -973,20 +977,20 @@ class LyricsPipeline(
     }
   }
 
-  suspend fun generateLyricsWithGemini(song: Song): Boolean = withContext(Dispatchers.IO) {
+  suspend fun generateLyricsWithOpenAI(song: Song): Boolean = withContext(Dispatchers.IO) {
     if (song.filePath == null) return@withContext false
     val file = File(song.filePath)
     if (!file.exists()) return@withContext false
 
     val durationSec = (song.durationMs / 1000).toInt()
     val steps = mutableListOf<LyricsDebugStep>()
-    val result = geminiSource.generateLyricsFromAudio(file, durationSec, { steps.add(it) })
+    val result = openAiSource.generateLyricsFromAudio(file, durationSec, { steps.add(it) })
     if (result?.syncedLyrics != null) {
       songDao.updateLyricsSuccess(
         songId = song.id,
         lyrics = result.syncedLyrics,
         isSynced = true,
-        source = "AI-generated",
+        source = "AI-generated (OpenAI)",
         fetchedAt = System.currentTimeMillis()
       )
       publishDebug(LyricsDebugInfo(
@@ -994,14 +998,14 @@ class LyricsPipeline(
         rawTitle = song.title,
         steps = steps,
         finalResult = "SYNCED",
-        finalSource = "AI-generated"
+        finalSource = "AI-generated (OpenAI)"
       ))
       return@withContext true
     }
     false
   }
 
-  suspend fun autoSyncLyricsWithGemini(song: Song, plainLyrics: String): String? = withContext(Dispatchers.IO) {
+  suspend fun autoSyncLyricsWithOpenAI(song: Song, plainLyrics: String): String? = withContext(Dispatchers.IO) {
     if (song.filePath == null) {
       throw IllegalStateException("Audio file path not found for '${song.title}'")
     }
@@ -1011,13 +1015,13 @@ class LyricsPipeline(
     }
     val durationSec = (song.durationMs / 1000).toInt()
     val steps = mutableListOf<LyricsDebugStep>()
-    val synced = geminiSource.autoSyncLyricsWithAudio(file, plainLyrics, durationSec, { steps.add(it) })
+    val synced = openAiSource.autoSyncLyricsWithAudio(file, plainLyrics, durationSec, { steps.add(it) })
     if (synced != null) {
       songDao.updateLyricsSuccess(
         songId = song.id,
         lyrics = synced,
         isSynced = true,
-        source = "AI-synced",
+        source = "AI-synced (OpenAI)",
         fetchedAt = System.currentTimeMillis()
       )
       publishDebug(LyricsDebugInfo(
@@ -1025,7 +1029,7 @@ class LyricsPipeline(
         rawTitle = song.title,
         steps = steps,
         finalResult = "SYNCED",
-        finalSource = "AI-synced"
+        finalSource = "AI-synced (OpenAI)"
       ))
     }
     synced

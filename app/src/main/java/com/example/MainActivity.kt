@@ -374,6 +374,8 @@ fun MainAppContent(viewModel: MusicViewModel) {
         lyricsLines = currentLyricsLines,
         activeLyricIndex = activeLyricIndex,
         currentPositionMs = currentPositionMs,
+        isPlaying = isPlaying,
+        onPlayPause = { viewModel.togglePlayPause() },
         onDismiss = { viewModel.closeLyrics() },
         onSeekTo = { pos -> viewModel.seekTo(pos) },
         onUpdateOffset = { offset ->
@@ -383,7 +385,9 @@ fun MainAppContent(viewModel: MusicViewModel) {
           currentSong?.let { viewModel.updateLyrics(it.id, text, isSynced) }
         },
         onRetryFetch = { song -> viewModel.fetchLyricsForSong(song, force = true) },
-        onOpenDebug = { viewModel.openLyricsDebug() }
+        onOpenDebug = { viewModel.openLyricsDebug() },
+        onGenerateLyricsWithAi = { song -> viewModel.generateLyricsWithAi(song) },
+        onAutoSyncWithAi = { song, plainText -> viewModel.autoSyncLyricsWithAi(song, plainText) }
       )
     }
 

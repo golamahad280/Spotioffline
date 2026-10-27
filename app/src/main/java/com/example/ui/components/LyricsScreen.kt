@@ -574,7 +574,6 @@ fun LyricsScreen(
       }
     }
   }
-}
 
 @Composable
 private fun ChipButton(text: String, isSelected: Boolean, onClick: () -> Unit) {

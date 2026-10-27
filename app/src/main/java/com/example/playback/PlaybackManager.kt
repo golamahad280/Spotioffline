@@ -227,19 +227,7 @@ class PlaybackManager(
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
           if (isRebuildingQueue) return
           try {
-            val mediaId = mediaItem?.mediaId ?: getActivePlayer()?.currentMediaItem?.mediaId ?: return
-            val list = _queue.value
-            val matchIdx = list.indexOfFirst { it.id == mediaId }
-            if (matchIdx >= 0) {
-              _queueIndex.value = matchIdx
-              _currentSong.value = list[matchIdx]
-            } else {
-              val currentIdx = getActivePlayer()?.currentMediaItemIndex ?: 0
-              if (currentIdx in list.indices) {
-                _queueIndex.value = currentIdx
-                _currentSong.value = list[currentIdx]
-              }
-            }
+            resyncFromPlayer()
             playedCurrentSongTimeMs = 0L
           } catch (e: Exception) {
             CrashLogger.e(TAG, "Error in onMediaItemTransition", e)
@@ -412,6 +400,8 @@ class PlaybackManager(
       isRebuildingQueue = false
       CrashLogger.e(TAG, "Error playing queue item", e)
       _isPlaying.value = false
+    } finally {
+      resyncFromPlayer()
     }
   }
 
@@ -457,7 +447,9 @@ class PlaybackManager(
       _currentPositionMs.value = 0L
     } else if (_repeatMode.value == RepeatMode.ALL && _shuffleEnabled.value) {
       // Re-shuffle for a fresh lap
-      val current = _currentSong.value
+      val player = getActivePlayer()
+      val playerMediaId = player?.currentMediaItem?.mediaId
+      val current = _queue.value.firstOrNull { it.id == playerMediaId } ?: _currentSong.value
       val freshShuffled = SmartShuffle.order(originalQueue, current)
       updatePlayerQueueForShuffle(freshShuffled, current)
     }
@@ -490,10 +482,12 @@ class PlaybackManager(
       if (player != null && player.hasNextMediaItem()) {
         player.seekToNextMediaItem()
         player.play()
+        resyncFromPlayer()
       } else {
         val list = _queue.value
         if (list.isEmpty()) return
-        val nextIdx = (_queueIndex.value + 1) % list.size
+        val currentIdx = player?.currentMediaItemIndex ?: _queueIndex.value
+        val nextIdx = (currentIdx + 1) % list.size
         _queueIndex.value = nextIdx
         playCurrentQueueItem()
       }
@@ -501,7 +495,8 @@ class PlaybackManager(
       CrashLogger.e(TAG, "Error in next()", e)
       val list = _queue.value
       if (list.isNotEmpty()) {
-        _queueIndex.value = (_queueIndex.value + 1) % list.size
+        val currentIdx = getActivePlayer()?.currentMediaItemIndex ?: _queueIndex.value
+        _queueIndex.value = (currentIdx + 1) % list.size
         playCurrentQueueItem()
       }
     }
@@ -519,12 +514,14 @@ class PlaybackManager(
         if (player.hasPreviousMediaItem()) {
           player.seekToPreviousMediaItem()
           player.play()
+          resyncFromPlayer()
           return
         }
       }
       val list = _queue.value
       if (list.isEmpty()) return
-      val prevIdx = if (_queueIndex.value - 1 < 0) list.size - 1 else _queueIndex.value - 1
+      val currentIdx = player?.currentMediaItemIndex ?: _queueIndex.value
+      val prevIdx = if (currentIdx - 1 < 0) list.size - 1 else currentIdx - 1
       _queueIndex.value = prevIdx
       playCurrentQueueItem()
     } catch (e: Exception) {
@@ -546,12 +543,25 @@ class PlaybackManager(
     _shuffleEnabled.value = newShuffleState
     prefs.edit().putBoolean("shuffle_enabled", newShuffleState).apply()
 
-    val current = _currentSong.value
+    val player = getActivePlayer()
+    val playerMediaId = player?.currentMediaItem?.mediaId
+    val playerMediaIdx = player?.currentMediaItemIndex ?: -1
+    val queueList = _queue.value
+    var current = if (playerMediaIdx in queueList.indices && queueList[playerMediaIdx].id == playerMediaId) {
+      queueList[playerMediaIdx]
+    } else {
+      queueList.firstOrNull { it.id == playerMediaId }
+    }
+    if (current == null) {
+      resyncFromPlayer()
+      current = _currentSong.value ?: _queue.value.firstOrNull()
+    }
+
     if (newShuffleState) {
       if (originalQueue.isEmpty()) {
         originalQueue = _queue.value
       }
-      val newOrderedQueue = SmartShuffle.order(_queue.value, current)
+      val newOrderedQueue = SmartShuffle.order(_queue.value, current ?: _queue.value.firstOrNull())
       updatePlayerQueueForShuffle(newOrderedQueue, current)
     } else {
       if (originalQueue.isNotEmpty()) {
@@ -585,35 +595,35 @@ class PlaybackManager(
         return
       }
 
-      val targetIndexInNewQueue = newQueue.indexOfFirst { it.id == currentSong?.id }.let { if (it >= 0) it else 0 }
+      val targetSong = if (currentSong != null && newQueue.any { it.id == currentSong.id }) {
+        currentSong
+      } else {
+        val playerMediaId = player.currentMediaItem?.mediaId
+        newQueue.firstOrNull { it.id == playerMediaId } ?: newQueue.first()
+      }
+
+      val targetIndexInNewQueue = newQueue.indexOfFirst { it.id == targetSong.id }.let { if (it >= 0) it else 0 }
       val mediaItems = newQueue.map { createMediaItem(it) }
 
       _queue.value = newQueue
       _queueIndex.value = targetIndexInNewQueue
-      _currentSong.value = newQueue.getOrNull(targetIndexInNewQueue)
+      _currentSong.value = targetSong
 
-      val currentIdx = player.currentMediaItemIndex
-      if (player.mediaItemCount > 0 && currentIdx in 0 until player.mediaItemCount) {
-        if (currentIdx < player.mediaItemCount - 1) {
-          player.removeMediaItems(currentIdx + 1, player.mediaItemCount)
-        }
-        if (currentIdx > 0) {
-          player.removeMediaItems(0, currentIdx)
-        }
-        if (targetIndexInNewQueue > 0) {
-          player.addMediaItems(0, mediaItems.subList(0, targetIndexInNewQueue))
-        }
-        if (targetIndexInNewQueue < mediaItems.size - 1) {
-          player.addMediaItems(mediaItems.subList(targetIndexInNewQueue + 1, mediaItems.size))
-        }
-      } else {
-        player.setMediaItems(mediaItems, targetIndexInNewQueue, 0L)
+      val currentPos = player.currentPosition.coerceAtLeast(0L)
+      val wasPlaying = player.isPlaying || player.playWhenReady
+
+      player.stop()
+      player.clearMediaItems()
+      player.setMediaItems(mediaItems, targetIndexInNewQueue, currentPos)
+      player.prepare()
+      if (wasPlaying) {
+        player.play()
       }
-
-      isRebuildingQueue = false
     } catch (e: Exception) {
-      isRebuildingQueue = false
       CrashLogger.e(TAG, "Error updating player queue for shuffle", e)
+    } finally {
+      isRebuildingQueue = false
+      resyncFromPlayer()
     }
   }
 
@@ -635,6 +645,7 @@ class PlaybackManager(
       CrashLogger.e(TAG, "Error adding item to queue", e)
     } finally {
       isRebuildingQueue = false
+      resyncFromPlayer()
     }
   }
 
@@ -642,47 +653,143 @@ class PlaybackManager(
     if (song.playbackError == 1) return
     isRebuildingQueue = true
 
+    val player = getActivePlayer()
+    val currentIdx = player?.currentMediaItemIndex ?: _queueIndex.value
     val currentList = _queue.value.toMutableList()
-    val currentIdx = _queueIndex.value
-    val insertAt = (currentIdx + 1).coerceAtMost(currentList.size)
+    val insertAt = (currentIdx + 1).coerceIn(0, currentList.size)
     currentList.add(insertAt, song)
     _queue.value = currentList
 
     val origList = originalQueue.toMutableList()
-    val origCurrentIdx = origList.indexOfFirst { it.id == _currentSong.value?.id }
+    val playerMediaId = player?.currentMediaItem?.mediaId ?: _currentSong.value?.id
+    val origCurrentIdx = origList.indexOfFirst { it.id == playerMediaId }
     val origInsertAt = if (origCurrentIdx >= 0) origCurrentIdx + 1 else origList.size
     origList.add(origInsertAt, song)
     originalQueue = origList
 
     try {
-      val player = getActivePlayer()
-      player?.addMediaItem(currentIdx + 1, createMediaItem(song))
+      player?.addMediaItem(insertAt, createMediaItem(song))
     } catch (e: Exception) {
       CrashLogger.e(TAG, "Error adding playNext item", e)
     } finally {
       isRebuildingQueue = false
+      resyncFromPlayer()
     }
   }
 
   fun removeFromQueue(index: Int) {
     val list = _queue.value.toMutableList()
-    if (index in list.indices && list.size > 1) {
-      isRebuildingQueue = true
-      val removedSong = list.removeAt(index)
-      _queue.value = list
+    if (index !in list.indices || list.size <= 1) return
 
-      val origList = originalQueue.toMutableList()
-      origList.removeAll { it.id == removedSong.id }
-      originalQueue = origList
+    isRebuildingQueue = true
+    val removedSong = list.removeAt(index)
+    _queue.value = list
 
-      if (_queueIndex.value >= list.size) {
-        _queueIndex.value = list.size - 1
+    val origList = originalQueue.toMutableList()
+    origList.removeAll { it.id == removedSong.id }
+    originalQueue = origList
+
+    val player = getActivePlayer()
+    val currentIdx = player?.currentMediaItemIndex ?: _queueIndex.value
+    val wasPlaying = _isPlaying.value
+
+    try {
+      player?.removeMediaItem(index)
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Error removing item from queue", e)
+    }
+
+    when {
+      index < currentIdx -> {
+        // (a) removed index < current index -> _queueIndex must decrease by 1
+        val newIdx = (currentIdx - 1).coerceIn(0, list.size - 1)
+        _queueIndex.value = newIdx
+        _currentSong.value = list.getOrNull(newIdx)
       }
+      index == currentIdx -> {
+        // (b) removed index == current index (the playing song) -> ExoPlayer jumps to next item
+        // after removal the current song becomes the song now at the same index (the next one)
+        // and playback continues if it was playing;
+        // if the removed song was the last item, the current song becomes the new last item, paused
+        if (index < list.size) {
+          _queueIndex.value = index
+          _currentSong.value = list[index]
+          if (wasPlaying) {
+            player?.play()
+          }
+        } else {
+          val lastIdx = list.size - 1
+          _queueIndex.value = lastIdx
+          _currentSong.value = list[lastIdx]
+          player?.pause()
+          _isPlaying.value = false
+        }
+      }
+      else -> {
+        // (c) removed index > current index -> nothing changes in current index
+      }
+    }
 
+    isRebuildingQueue = false
+    resyncFromPlayer()
+  }
+
+  fun resyncFromPlayer() {
+    val player = getActivePlayer() ?: return
+    val list = _queue.value
+    if (list.isEmpty()) {
+      _currentSong.value = null
+      _queueIndex.value = 0
+      return
+    }
+
+    val playerMediaIdx = player.currentMediaItemIndex
+    val currentMediaId = player.currentMediaItem?.mediaId
+    val currentIdx = if (playerMediaIdx in list.indices && list[playerMediaIdx].id == currentMediaId) {
+      playerMediaIdx
+    } else if (currentMediaId != null) {
+      list.indexOfFirst { it.id == currentMediaId }
+    } else {
+      -1
+    }
+
+    val playerMediaCount = player.mediaItemCount
+    val playlistInSync = if (playerMediaCount == list.size) {
+      var inSync = true
+      for (i in 0 until playerMediaCount) {
+        if (player.getMediaItemAt(i).mediaId != list[i].id) {
+          inSync = false
+          break
+        }
+      }
+      inSync
+    } else {
+      false
+    }
+
+    if (currentIdx >= 0 && playlistInSync) {
+      _queueIndex.value = currentIdx
+      _currentSong.value = list[currentIdx]
+    } else {
       try {
-        getActivePlayer()?.removeMediaItem(index)
+        isRebuildingQueue = true
+        val targetIdx = if (currentIdx >= 0) currentIdx else _queueIndex.value.coerceIn(0, list.size - 1)
+        val targetSong = list[targetIdx]
+        val currentPos = player.currentPosition.coerceAtLeast(0L)
+        val wasPlaying = player.isPlaying || player.playWhenReady
+
+        player.stop()
+        player.clearMediaItems()
+        val mediaItems = list.map { createMediaItem(it) }
+        player.setMediaItems(mediaItems, targetIdx, currentPos)
+        player.prepare()
+        if (wasPlaying) {
+          player.play()
+        }
+        _queueIndex.value = targetIdx
+        _currentSong.value = targetSong
       } catch (e: Exception) {
-        CrashLogger.e(TAG, "Error removing item from queue", e)
+        CrashLogger.e(TAG, "Error rebuilding player playlist during resyncFromPlayer", e)
       } finally {
         isRebuildingQueue = false
       }

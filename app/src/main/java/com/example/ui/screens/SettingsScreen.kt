@@ -933,45 +933,30 @@ fun NotificationDebugCard() {
   var permStatus by remember { mutableStateOf("Checking...") }
   var serviceStatus by remember { mutableStateOf("Checking...") }
   var notifStatus by remember { mutableStateOf("Checking...") }
-  var channelInfo by remember { mutableStateOf("Checking...") }
-  var actionsInfo by remember { mutableStateOf("Checking...") }
 
   fun queryStatus() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-      permStatus = if (granted) "Granted" else "Denied"
+      permStatus = if (granted) "yes" else "no"
     } else {
-      permStatus = "Granted (Pre-Android 13)"
+      permStatus = "yes"
     }
 
     val isRunning = MusicPlaybackService.getInstance() != null
-    serviceStatus = if (isRunning) "Running (Active)" else "Stopped"
+    serviceStatus = if (isRunning) "yes" else "no"
 
     val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      val channel = nm?.getNotificationChannel(MusicPlaybackService.CHANNEL_ID)
-      channelInfo = if (channel != null) {
-        "${channel.name} (ID: ${channel.id}, Importance: ${channel.importance})"
-      } else {
-        "Channel not created"
-      }
-    } else {
-      channelInfo = "Legacy channel"
-    }
-
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && nm != null) {
       val active = nm.activeNotifications.firstOrNull { it.id == MusicPlaybackService.NOTIFICATION_ID }
       if (active != null) {
-        notifStatus = "Posted (ID ${active.id})"
         val acts = active.notification.actions
-        actionsInfo = if (acts != null) "${acts.size} actions configured" else "No actions"
+        val count = acts?.size ?: 0
+        notifStatus = "yes ($count actions)"
       } else {
-        notifStatus = "Not currently posted"
-        actionsInfo = "N/A"
+        notifStatus = "no"
       }
     } else {
-      notifStatus = "Unknown / Pre-M"
-      actionsInfo = "N/A"
+      notifStatus = if (isRunning) "yes" else "no"
     }
   }
 
@@ -985,7 +970,7 @@ fun NotificationDebugCard() {
       .clip(RoundedCornerShape(12.dp))
       .background(SpotifyCardElevated)
       .padding(16.dp),
-    verticalArrangement = Arrangement.spacedBy(8.dp)
+    verticalArrangement = Arrangement.spacedBy(10.dp)
   ) {
     Row(
       modifier = Modifier.fillMaxWidth(),
@@ -995,20 +980,23 @@ fun NotificationDebugCard() {
       Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(imageVector = Icons.Default.Notifications, contentDescription = null, tint = SpotifyGreen)
         Spacer(modifier = Modifier.width(10.dp))
-        Text("Notification & Service Status", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Text("Notification Debug", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
       }
-      IconButton(onClick = { queryStatus() }) {
-        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh", tint = SpotifyGreen)
+      Button(
+        onClick = { queryStatus() },
+        colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+        modifier = Modifier.height(32.dp)
+      ) {
+        Text("Check now", color = SpotifyBlack, fontSize = 12.sp, fontWeight = FontWeight.Bold)
       }
     }
 
     HorizontalDivider(color = SpotifyDivider)
 
-    DebugRow("POST_NOTIFICATIONS", permStatus, if (permStatus.startsWith("Granted")) SpotifyGreen else Color(0xFFFF5252))
-    DebugRow("MusicPlaybackService", serviceStatus, if (serviceStatus.startsWith("Running")) SpotifyGreen else SpotifyTextSecondary)
-    DebugRow("Active Notification", notifStatus, if (notifStatus.startsWith("Posted")) SpotifyGreen else SpotifyTextSecondary)
-    DebugRow("Channel", channelInfo, SpotifyTextSecondary)
-    DebugRow("Actions", actionsInfo, SpotifyTextSecondary)
+    DebugRow("Notification permission", permStatus, if (permStatus == "yes") SpotifyGreen else Color(0xFFFF5252))
+    DebugRow("Service running", serviceStatus, if (serviceStatus == "yes") SpotifyGreen else Color(0xFFFF5252))
+    DebugRow("Active media notification", notifStatus, if (notifStatus.startsWith("yes")) SpotifyGreen else Color(0xFFFF5252))
   }
 }
 
@@ -1038,11 +1026,14 @@ fun StressTestDialog(
   var progress by remember { mutableStateOf<StressTestProgress?>(null) }
   var logReport by remember { mutableStateOf("") }
 
+  var selectedDurationMinutes by remember { mutableStateOf(3) }
+  var seedInput by remember { mutableStateOf("42") }
+
   AlertDialog(
     onDismissRequest = { if (!isRunning) onDismiss() },
     title = {
       Text(
-        text = if (isFinished) "Real Stress Test Report" else "On-Device Real Stress Test",
+        text = if (isFinished) "Deterministic Stress Test Report" else "On-Device Real Stress Test",
         color = SpotifyWhite,
         fontSize = 16.sp,
         fontWeight = FontWeight.Bold
@@ -1052,28 +1043,54 @@ fun StressTestDialog(
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .height(320.dp)
+          .height(360.dp)
       ) {
         if (!isRunning && !isFinished) {
-          Text(
-            text = "This real stress tester drives PlaybackManager and ExoPlayer on real audio files for >= 3 minutes (180s), performing 100 actual playback actions (play, pause, next, seek, shuffle, repeat, queue mutations), allowing real decoding, and continuously validating 6 system invariants.",
-            color = SpotifyTextSecondary,
-            fontSize = 13.sp,
-            lineHeight = 18.sp
-          )
-          Spacer(modifier = Modifier.height(12.dp))
-          Text(
-            text = "Playable tracks in pool: ${availableSongs.count { it.playbackError == 0 }} (samples up to 60)",
-            color = SpotifyGreen,
-            fontSize = 12.sp
-          )
-          Spacer(modifier = Modifier.height(12.dp))
-          Text(
-            text = "Click 'Start Real Test' to begin.",
-            color = SpotifyWhite,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold
-          )
+          Column(
+            modifier = Modifier
+              .fillMaxSize()
+              .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+          ) {
+            Text(
+              text = "This real stress tester drives PlaybackManager and ExoPlayer on real audio files, performing continuous playback actions and validating 6 system invariants.",
+              color = SpotifyTextSecondary,
+              fontSize = 12.sp,
+              lineHeight = 16.sp
+            )
+
+            Text("Duration Choice:", color = SpotifyWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              listOf(3 to "3 Minutes", 10 to "10 Minutes").forEach { (mins, label) ->
+                val isSelected = selectedDurationMinutes == mins
+                Button(
+                  onClick = { selectedDurationMinutes = mins },
+                  colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isSelected) SpotifyGreen else SpotifyDivider,
+                    contentColor = if (isSelected) SpotifyBlack else SpotifyWhite
+                  ),
+                  contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                  modifier = Modifier.height(34.dp)
+                ) {
+                  Text(label, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+                }
+              }
+            }
+
+            OutlinedTextField(
+              value = seedInput,
+              onValueChange = { seedInput = it.filter { ch -> ch.isDigit() } },
+              label = { Text("Random Seed", color = SpotifyTextSecondary, fontSize = 12.sp) },
+              singleLine = true,
+              modifier = Modifier.fillMaxWidth()
+            )
+
+            Text(
+              text = "Available playable tracks in pool: ${availableSongs.count { it.playbackError == 0 }} (samples up to 60)",
+              color = SpotifyGreen,
+              fontSize = 12.sp
+            )
+          }
         } else if (isRunning) {
           Column(
             modifier = Modifier.fillMaxSize(),
@@ -1083,7 +1100,8 @@ fun StressTestDialog(
             val elapsed = progress?.elapsedSeconds ?: 0L
             val current = progress?.currentStep ?: 0
             val total = progress?.totalSteps ?: 100
-            val progFraction = (elapsed.toFloat() / 180f).coerceIn(0f, 1f)
+            val targetSec = selectedDurationMinutes * 60
+            val progFraction = (elapsed.toFloat() / targetSec.toFloat()).coerceIn(0f, 1f)
 
             androidx.compose.material3.LinearProgressIndicator(
               progress = { progFraction },
@@ -1096,7 +1114,7 @@ fun StressTestDialog(
             Spacer(modifier = Modifier.height(4.dp))
             Text("Step $current / $total", color = SpotifyGreen, fontSize = 13.sp)
             Spacer(modifier = Modifier.height(4.dp))
-            Text("Elapsed: ${elapsed}s / 180s (min 60s)", color = SpotifyTextSecondary, fontSize = 12.sp)
+            Text("Elapsed: ${elapsed}s / ${targetSec}s (min 60s)", color = SpotifyTextSecondary, fontSize = 12.sp)
             Spacer(modifier = Modifier.height(4.dp))
             Text("Action: ${progress?.currentAction ?: "Starting..."}", color = SpotifyWhite, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(modifier = Modifier.height(4.dp))
@@ -1126,9 +1144,14 @@ fun StressTestDialog(
             if (playbackManager != null) {
               isRunning = true
               isFinished = false
+              val seed = seedInput.toLongOrNull() ?: 42L
               coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                 val tester = RealStressTester(context, playbackManager)
-                val report = tester.run(availableSongs) { p ->
+                val report = tester.run(
+                  availableSongs = availableSongs,
+                  seed = seed,
+                  durationMinutes = selectedDurationMinutes
+                ) { p ->
                   progress = p
                 }
                 logReport = report

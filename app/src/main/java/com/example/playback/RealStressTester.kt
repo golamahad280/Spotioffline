@@ -6,6 +6,7 @@ import com.example.data.model.Song
 import com.example.utils.CrashLogger
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
+import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
 import kotlin.random.Random
@@ -18,6 +19,14 @@ data class StressTestProgress(
   val violationsCount: Int
 )
 
+data class SongTestRecord(
+  val song: Song,
+  var status: String = "OK",
+  var errorCode: String = "-",
+  var playCount: Int = 0,
+  var errorCount: Int = 0
+)
+
 class RealStressTester(
   private val context: Context,
   private val playbackManager: PlaybackManager
@@ -25,19 +34,24 @@ class RealStressTester(
   companion object {
     private const val TAG = "RealStressTester"
     const val MINIMUM_VALID_DURATION_MS = 60_000L
-    const val TARGET_DURATION_MS = 180_000L // 3 minutes
   }
 
   suspend fun run(
     availableSongs: List<Song>,
+    seed: Long = 42L,
+    durationMinutes: Int = 3,
     onProgress: (StressTestProgress) -> Unit
   ): String {
     val startTime = System.currentTimeMillis()
+    val targetDurationMs = durationMinutes * 60 * 1000L
+    val targetDurationSec = durationMinutes * 60
+
     val report = StringBuilder()
-    report.append("=== SPOTIOFFLINE REAL STRESS TEST REPORT ===\n")
+    report.append("=== SPOTIOFFLINE DETERMINISTIC REAL STRESS TEST REPORT ===\n")
+    report.append("Random Seed: $seed\n")
     report.append("Started: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(startTime))}\n")
-    report.append("Target Duration: >= 3 minutes (180s)\n")
-    report.append("Minimum Valid Duration: 60s\n\n")
+    report.append("Selected Duration: $durationMinutes minutes (${targetDurationSec}s)\n")
+    report.append("Minimum Valid Duration Threshold: 60s\n\n")
 
     val songs = availableSongs.filter { it.playbackError == 0 }.take(60)
     if (songs.isEmpty()) {
@@ -46,29 +60,50 @@ class RealStressTester(
       return report.toString()
     }
 
-    report.append("Pool Size: ${songs.size} unique songs loaded\n\n")
+    val songRecords = availableSongs.associate { it.id to SongTestRecord(it) }.toMutableMap()
+    val unplayableFiles = availableSongs.filter { it.playbackError != 0 }.map { it.filePath ?: it.title }.toMutableList()
+
+    report.append("Active Pool Size: ${songs.size} unique songs loaded (out of ${availableSongs.size} total in DB)\n\n")
 
     val violations = mutableListOf<String>()
+    val violationsWithHistory = mutableListOf<String>()
+    val recentActions = ArrayDeque<String>()
+    val caughtExceptions = mutableListOf<String>()
+
+    var peakMemoryBytes = 0L
     var step = 0
-    val totalSteps = 100 // 100 steps * ~1.8s each = ~180s (3 minutes)
-    val random = Random(42)
+    val totalSteps = (durationMinutes * 60) / 2 // approx 1 step every ~2s
+    val random = Random(seed)
+
+    fun updatePeakMemory() {
+      val runtime = Runtime.getRuntime()
+      val usedMem = runtime.totalMemory() - runtime.freeMemory()
+      if (usedMem > peakMemoryBytes) {
+        peakMemoryBytes = usedMem
+      }
+    }
+    updatePeakMemory()
 
     // Initial setup: start with a queue
     playbackManager.setQueue(songs, 0)
+    recentActions.addLast("setQueue(pool, 0)")
     delay(2000L)
 
-    while (System.currentTimeMillis() - startTime < TARGET_DURATION_MS || step < totalSteps) {
+    while (System.currentTimeMillis() - startTime < targetDurationMs || step < totalSteps) {
       step++
+      updatePeakMemory()
+
       val actionType = random.nextInt(9)
       val actionName = when (actionType) {
         0 -> {
           val randomSong = songs[random.nextInt(songs.size)]
+          songRecords[randomSong.id]?.let { it.playCount++ }
           playbackManager.playSong(randomSong, songs)
           "playSong(${randomSong.title.take(15)})"
         }
         1 -> {
           playbackManager.togglePlayPause()
-          "togglePlayPause()"
+          "togglePlayPause(playing=${playbackManager.isPlaying.value})"
         }
         2 -> {
           playbackManager.next()
@@ -100,9 +135,10 @@ class RealStressTester(
         8 -> {
           val queueSize = playbackManager.queue.value.size
           if (queueSize > 2) {
-            val removeIdx = random.nextInt(1, queueSize)
+            val removeIdx = random.nextInt(0, queueSize)
+            val removingSong = playbackManager.queue.value.getOrNull(removeIdx)
             playbackManager.removeFromQueue(removeIdx)
-            "removeFromQueue($removeIdx)"
+            "removeFromQueue($removeIdx:${removingSong?.title?.take(10) ?: "unknown"})"
           } else {
             val extraSong = songs[random.nextInt(songs.size)]
             playbackManager.addToQueue(extraSong)
@@ -112,14 +148,52 @@ class RealStressTester(
         else -> "noop"
       }
 
-      // Wait for real state transition (up to 5s timeout)
-      waitForSettle(timeoutMs = 5000L)
-      // Real playback audio decoding delay
-      delay(1500L)
+      // Maintain recent actions history (up to 10)
+      if (recentActions.size >= 10) {
+        recentActions.removeFirst()
+      }
+      recentActions.addLast("Step $step: $actionName")
+
+      try {
+        // Wait for real state transition (up to 5s timeout)
+        waitForSettle(timeoutMs = 5000L)
+        // Real playback audio decoding delay
+        delay(1500L)
+      } catch (e: Exception) {
+        caughtExceptions.add("Exception during step $step ($actionName): ${e.message}")
+        CrashLogger.e(TAG, "Exception during stress test step $step", e)
+      }
+
+      // Check current track status
+      val currentSong = playbackManager.currentSong.value
+      if (currentSong != null) {
+        val record = songRecords[currentSong.id]
+        if (record != null) {
+          if (currentSong.playbackError != 0) {
+            record.status = "Error"
+            record.errorCode = "Err_${currentSong.playbackError}"
+            if (!unplayableFiles.contains(currentSong.filePath ?: currentSong.title)) {
+              unplayableFiles.add(currentSong.filePath ?: currentSong.title)
+            }
+          }
+        }
+      }
 
       // Invariant checks
       val stepViolations = checkInvariants(step, actionName)
-      violations.addAll(stepViolations)
+      if (stepViolations.isNotEmpty()) {
+        violations.addAll(stepViolations)
+        val snapshot = recentActions.toList()
+        val detailedViolation = buildString {
+          append("VIOLATION at Step $step [$actionName]:\n")
+          stepViolations.forEach { append("  * $it\n") }
+          append("  Previous up to 10 actions:\n")
+          snapshot.forEachIndexed { i, act ->
+            append("    ${i + 1}. $act\n")
+          }
+        }
+        violationsWithHistory.add(detailedViolation)
+      }
 
       val elapsedSec = (System.currentTimeMillis() - startTime) / 1000L
       onProgress(
@@ -145,21 +219,63 @@ class RealStressTester(
     report.append("Completed: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(endTime))}\n")
     report.append("Total Execution Time: ${totalElapsedSec}s (${totalElapsedMs}ms)\n")
     report.append("Total Real Steps Performed: $step\n")
-    report.append("Total Invariant Violations: ${violations.size}\n\n")
+    report.append("Peak Process Memory: ${peakMemoryBytes / (1024 * 1024)} MB\n")
+    report.append("Total Invariant Violations: ${violations.size}\n")
+    report.append("Exceptions Caught: ${if (caughtExceptions.isEmpty()) "0 (None)" else "${caughtExceptions.size} exceptions"}\n\n")
 
+    if (caughtExceptions.isNotEmpty()) {
+      report.append("=== EXCEPTIONS ENCOUNTERED ===\n")
+      caughtExceptions.take(5).forEach { report.append("  - $it\n") }
+      report.append("\n")
+    }
+
+    if (violationsWithHistory.isNotEmpty()) {
+      report.append("=== VIOLATION DETAILS (WITH PREVIOUS 10 ACTIONS) ===\n")
+      violationsWithHistory.take(10).forEach {
+        report.append(it).append("\n")
+      }
+      if (violationsWithHistory.size > 10) {
+        report.append("... and ${violationsWithHistory.size - 10} more violations omitted for brevity.\n\n")
+      }
+    } else {
+      report.append("All 6 invariants satisfied 100% across all real operations.\n\n")
+    }
+
+    // Unplayable Files Section
+    report.append("=== UNPLAYABLE / FAILED FILES (${unplayableFiles.size}) ===\n")
+    if (unplayableFiles.isEmpty()) {
+      report.append("None (all files playable without playback errors)\n\n")
+    } else {
+      unplayableFiles.forEach { report.append("  - $it\n") }
+      report.append("\n")
+    }
+
+    // Per-Song Table
+    report.append("=== PER-SONG PLAYBACK TABLE (${songRecords.size} tracks) ===\n")
+    report.append(String.format(Locale.US, "%-20s | %-15s | %-4s | %-8s | %-7s | %-8s\n", "Title", "File Path", "Ext", "Duration", "Status", "Error"))
+    report.append("--------------------------------------------------------------------------------------\n")
+    songRecords.values.take(30).forEach { r ->
+      val title = r.song.title.take(20).padEnd(20)
+      val path = (r.song.filePath ?: r.song.uriString).takeLast(15).padEnd(15)
+      val ext = (r.song.filePath?.substringAfterLast('.', "") ?: "mp3").take(4).padEnd(4)
+      val dur = "${r.song.durationMs / 1000}s".padEnd(8)
+      val status = r.status.padEnd(7)
+      val err = r.errorCode.padEnd(8)
+      report.append("$title | $path | $ext | $dur | $status | $err\n")
+    }
+    if (songRecords.size > 30) {
+      report.append("... and ${songRecords.size - 30} additional song records omitted for brevity.\n")
+    }
+    report.append("\n")
+
+    // Final Status Verdict
     if (totalElapsedMs < MINIMUM_VALID_DURATION_MS) {
-      report.append("STATUS: INVALID\n")
+      report.append("FINAL STATUS: INVALID\n")
       report.append("Reason: Test completed in ${totalElapsedSec}s (< 60s minimum threshold).\n")
     } else if (violations.isEmpty()) {
-      report.append("STATUS: PASSED (100% Stable)\n")
-      report.append("All 6 invariants satisfied across all real playback operations.\n")
+      report.append("FINAL STATUS: PASSED (100% Invariants Satisfied & Stable)\n")
     } else {
-      report.append("STATUS: FAILED (${violations.size} violations)\n")
-      report.append("Violations log:\n")
-      violations.take(15).forEach { report.append("  - $it\n") }
-      if (violations.size > 15) {
-        report.append("  ... and ${violations.size - 15} more\n")
-      }
+      report.append("FINAL STATUS: FAILED (${violations.size} violations)\n")
     }
 
     return report.toString()

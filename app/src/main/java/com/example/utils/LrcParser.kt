@@ -93,6 +93,35 @@ object LrcParser {
     return sb.toString().trimEnd()
   }
 
+  fun stripTimestamps(rawText: String?): String {
+    if (rawText.isNullOrBlank()) return ""
+    val normalized = rawText.replace("\r\n", "\n").replace("\r", "\n")
+    val lines = normalized.lines()
+    val cleanLines = mutableListOf<String>()
+
+    for (line in lines) {
+      val trimmed = line.trim()
+      if (trimmed.isEmpty()) continue
+
+      // Ignore standard ID3/LRC metadata headers
+      if (trimmed.startsWith("[ti:", ignoreCase = true) ||
+          trimmed.startsWith("[ar:", ignoreCase = true) ||
+          trimmed.startsWith("[al:", ignoreCase = true) ||
+          trimmed.startsWith("[by:", ignoreCase = true) ||
+          trimmed.startsWith("[offset:", ignoreCase = true) ||
+          trimmed.startsWith("[re:", ignoreCase = true) ||
+          trimmed.startsWith("[ve:", ignoreCase = true)) {
+        continue
+      }
+
+      val stripped = TIMESTAMP_PATTERN.matcher(trimmed).replaceAll("").trim()
+      if (stripped.isNotEmpty()) {
+        cleanLines.add(stripped)
+      }
+    }
+    return cleanLines.joinToString("\n")
+  }
+
   fun findActiveLineIndex(lines: List<LrcLine>, positionMs: Long, offsetMs: Long = 0L): Int {
     if (lines.isEmpty()) return -1
     val targetTime = positionMs + offsetMs

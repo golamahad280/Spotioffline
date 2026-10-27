@@ -462,7 +462,13 @@ fun MainAppContent(viewModel: MusicViewModel) {
         onRetryFetch = { song -> viewModel.fetchLyricsForSong(song, force = true) },
         onOpenDebug = { viewModel.openLyricsDebug() },
         onGenerateLyricsWithAi = { song -> viewModel.generateLyricsWithAi(song) },
-        onAutoSyncWithAi = { song, plainText -> viewModel.autoSyncLyricsWithAi(song, plainText) }
+        onAutoSyncWithAi = { song, plainText -> viewModel.autoSyncLyricsWithAi(song, plainText) },
+        onRestoreOriginal = { currentSong?.let { viewModel.restoreOriginal(it.id) } },
+        onDeleteLyrics = { currentSong?.let { viewModel.deleteLyrics(it.id) } },
+        onSaveEnglish = { enText -> currentSong?.let { viewModel.saveEnglishLyrics(it.id, enText, "MANUAL") } },
+        onGenerateEnglish = { text, isSynced, mode ->
+          currentSong?.let { viewModel.generateEnglishLyrics(it.id, text, isSynced, mode) } ?: ""
+        }
       )
     }
 

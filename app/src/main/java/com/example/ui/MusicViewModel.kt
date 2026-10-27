@@ -22,6 +22,7 @@ import com.example.utils.CrashLogger
 import com.example.utils.ImageUtils
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -321,16 +322,58 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
   fun updateLyrics(songId: String, text: String, isSynced: Boolean, source: String? = null) {
     viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      val song = songDao.getSongById(songId)
+      val prev = song?.lyricsText
+      val script = com.example.utils.ScriptDetector.detectScript(text)
       val effectiveSource = source ?: if (isSynced) "Manual LRC" else "Manual Plain"
-      songDao.updateLyricsSuccess(
+      songDao.saveManualLyrics(
         songId = songId,
         lyrics = text,
         isSynced = isSynced,
-        source = effectiveSource,
-        fetchedAt = System.currentTimeMillis()
+        previousLyrics = prev,
+        script = script
       )
       playbackManager.refreshCurrentSongFromDb()
-      CrashLogger.i("MusicViewModel", "Updated manual lyrics for song $songId (synced=$isSynced, source=$effectiveSource)")
+      CrashLogger.i("MusicViewModel", "Saved manual lyrics for song $songId (synced=$isSynced)")
+    }
+  }
+
+  fun restoreOriginal(songId: String) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      val song = songDao.getSongById(songId)
+      val orig = song?.lyricsOriginal
+      val isSynced = LrcParser.hasLrcTimestamps(orig)
+      val script = com.example.utils.ScriptDetector.detectScript(orig)
+      songDao.restoreOriginalLyrics(songId, isSynced, script)
+      playbackManager.refreshCurrentSongFromDb()
+    }
+  }
+
+  fun deleteLyrics(songId: String) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      songDao.deleteLyrics(songId)
+      playbackManager.refreshCurrentSongFromDb()
+    }
+  }
+
+  fun saveEnglishLyrics(songId: String, enText: String?, mode: String?) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      songDao.saveEnglishLyrics(songId, enText, mode)
+      playbackManager.refreshCurrentSongFromDb()
+    }
+  }
+
+  suspend fun generateEnglishLyrics(songId: String, text: String, isSynced: Boolean, mode: String): String = withContext(Dispatchers.IO) {
+    val result = lyricsPipeline.openAiSource.generateEnglishLyrics(text, isSynced, mode)
+    songDao.saveEnglishLyrics(songId, result, mode)
+    playbackManager.refreshCurrentSongFromDb()
+    result
+  }
+
+  fun refetchOnline(song: Song) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      lyricsPipeline.fetchLyricsForSong(song, force = true)
+      playbackManager.refreshCurrentSongFromDb()
     }
   }
 

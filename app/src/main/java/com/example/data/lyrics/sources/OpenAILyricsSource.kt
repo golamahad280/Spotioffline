@@ -27,6 +27,8 @@ class OpenAILyricsSource(private val context: Context) : LyricsSource {
     .writeTimeout(120, TimeUnit.SECONDS)
     .build()
 
+  var customBaseUrl: String? = null
+
   companion object {
     private const val TAG = "OpenAILyricsSource"
 
@@ -498,6 +500,110 @@ class OpenAILyricsSource(private val context: Context) : LyricsSource {
       "flac" -> "audio/flac"
       "ogg", "opus" -> "audio/ogg"
       else -> "audio/mpeg"
+    }
+  }
+
+  suspend fun generateEnglishLyrics(
+    lyricsText: String,
+    isSynced: Boolean,
+    mode: String,
+    onStepLogged: ((LyricsDebugStep) -> Unit)? = null
+  ): String = withContext(Dispatchers.IO) {
+    val apiKey = getApiKey() ?: throw IllegalStateException("No OpenAI API key found. Please add key in Settings.")
+    val chatModel = getChatModel()
+
+    val (linesToSend, timestamps) = if (isSynced) {
+      val parsed = LrcParser.parse(lyricsText)
+      if (parsed.isEmpty()) {
+        val raw = lyricsText.lines().filter { it.isNotBlank() }
+        Pair(raw, emptyList())
+      } else {
+        Pair(parsed.map { it.text }, parsed.map { it.timestampMs })
+      }
+    } else {
+      Pair(lyricsText.lines().filter { it.isNotBlank() }, emptyList())
+    }
+
+    if (linesToSend.isEmpty()) {
+      throw IllegalStateException("Lyrics text is empty.")
+    }
+
+    val systemPrompt = if (mode.equals("ROMANIZED", ignoreCase = true)) {
+      """
+      You are a song lyrics romanization tool.
+      Convert the input lyrics into Romanized Latin script.
+      Maintain a STRICT 1:1 line correspondence with the input.
+      Return a JSON object with a single key "lines" containing a JSON array of strings with EXACTLY ${linesToSend.size} items.
+      Do NOT add or remove lines. Output JSON format: {"lines": ["...", "..."]}
+      """.trimIndent()
+    } else {
+      """
+      You are a song lyrics translation tool.
+      Translate the input lyrics into English.
+      Maintain a STRICT 1:1 line correspondence with the input.
+      Return a JSON object with a single key "lines" containing a JSON array of strings with EXACTLY ${linesToSend.size} items.
+      Do NOT add or remove lines. Output JSON format: {"lines": ["...", "..."]}
+      """.trimIndent()
+    }
+
+    val numberedInput = linesToSend.mapIndexed { idx, line -> "${idx + 1}. $line" }.joinToString("\n")
+
+    val chatJson = JSONObject().apply {
+      put("model", chatModel)
+      put("response_format", JSONObject().put("type", "json_object"))
+      put("temperature", 0)
+      put("messages", JSONArray().apply {
+        put(JSONObject().put("role", "system").put("content", systemPrompt))
+        put(JSONObject().put("role", "user").put("content", numberedInput))
+      })
+    }
+
+    val chatUrl = customBaseUrl?.let { if (it.endsWith("/")) "${it}chat/completions" else "$it/chat/completions" }
+      ?: "https://api.openai.com/v1/chat/completions"
+
+    val chatReq = Request.Builder()
+      .url(chatUrl)
+      .header("Authorization", "Bearer $apiKey")
+      .post(chatJson.toString().toRequestBody("application/json".toMediaType()))
+      .build()
+
+    val res = okClient.newCall(chatReq).execute()
+    val code = res.code
+    val bodyStr = res.body?.string() ?: ""
+
+    if (code == 401) {
+      throw IllegalStateException("HTTP 401: Unauthorized. Please check your OpenAI API key in Settings.")
+    }
+    if (code == 429) {
+      throw IllegalStateException("HTTP 429: Rate limit or quota exceeded. Please check your OpenAI billing/quota.")
+    }
+    if (!res.isSuccessful) {
+      throw IllegalStateException("HTTP $code: $bodyStr")
+    }
+
+    val jsonObj = JSONObject(bodyStr)
+    val content = jsonObj.optJSONArray("choices")?.optJSONObject(0)
+      ?.optJSONObject("message")?.optString("content")
+      ?: throw IllegalStateException("Empty completion response from OpenAI.")
+
+    val parsedJson = JSONObject(content)
+    val returnedLinesArray = parsedJson.optJSONArray("lines")
+      ?: throw IllegalStateException("Missing 'lines' array in AI response.")
+
+    val returnedLines = mutableListOf<String>()
+    for (i in 0 until returnedLinesArray.length()) {
+      returnedLines.add(returnedLinesArray.getString(i).trim())
+    }
+
+    if (returnedLines.size != linesToSend.size) {
+      throw IllegalStateException("Line count mismatch: expected ${linesToSend.size} lines, got ${returnedLines.size} lines from AI.")
+    }
+
+    if (timestamps.isNotEmpty() && timestamps.size == returnedLines.size) {
+      val lrcLines = timestamps.zip(returnedLines) { time, text -> com.example.data.model.LrcLine(time, text) }
+      LrcParser.formatToLrc(lrcLines)
+    } else {
+      returnedLines.joinToString("\n")
     }
   }
 }

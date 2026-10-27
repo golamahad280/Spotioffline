@@ -55,22 +55,56 @@ interface SongDao {
   @Query("SELECT * FROM songs WHERE id = :songId")
   fun getSongByIdFlow(songId: String): Flow<Song?>
 
-  @Query("UPDATE songs SET lyricsText = :lyrics, hasLyrics = 1, isSyncedLyrics = :isSynced, lyricsSource = :source, lyricsFetchedAt = :fetchedAt, lyricsStatus = 'READY', lyricsError = NULL WHERE id = :songId")
-  suspend fun updateLyricsSuccess(songId: String, lyrics: String, isSynced: Boolean, source: String, fetchedAt: Long)
+  @Query("UPDATE songs SET lyricsText = :lyrics, hasLyrics = 1, isSyncedLyrics = :isSynced, lyricsSource = :source, lyricsFetchedAt = :fetchedAt, lyricsStatus = 'READY', lyricsError = NULL, lyricsOriginal = CASE WHEN lyricsOriginal IS NULL THEN :lyrics ELSE lyricsOriginal END, lyricsScript = :script WHERE id = :songId AND lyricsLocked = 0")
+  suspend fun updateLyricsSuccess(songId: String, lyrics: String, isSynced: Boolean, source: String, fetchedAt: Long, script: String? = null)
 
-  @Query("UPDATE songs SET lyricsStatus = 'NOT_FOUND', lyricsFetchedAt = :fetchedAt, lyricsError = :error WHERE id = :songId")
+  @Query("UPDATE songs SET lyricsText = :lyrics, hasLyrics = 1, isSyncedLyrics = :isSynced, lyricsSource = 'Manual', lyricsFetchedAt = :fetchedAt, lyricsStatus = 'READY', lyricsError = NULL, lyricsLocked = 1, lyricsOriginal = CASE WHEN lyricsOriginal IS NULL THEN :previousLyrics ELSE lyricsOriginal END, lyricsScript = :script WHERE id = :songId")
+  suspend fun saveManualLyrics(
+    songId: String,
+    lyrics: String,
+    isSynced: Boolean,
+    previousLyrics: String?,
+    script: String?,
+    fetchedAt: Long = System.currentTimeMillis()
+  )
+
+  @Query("UPDATE songs SET lyricsText = lyricsOriginal, hasLyrics = CASE WHEN lyricsOriginal IS NOT NULL AND lyricsOriginal != '' THEN 1 ELSE 0 END, isSyncedLyrics = :isSynced, lyricsSource = 'Restored', lyricsStatus = 'READY', lyricsLocked = 0, lyricsScript = :script WHERE id = :songId")
+  suspend fun restoreOriginalLyrics(
+    songId: String,
+    isSynced: Boolean,
+    script: String?
+  )
+
+  @Query("UPDATE songs SET lyricsText = NULL, hasLyrics = 0, isSyncedLyrics = 0, lyricsStatus = 'IDLE', lyricsSource = 'Manual Deleted', lyricsLocked = 1, lyricsEnText = NULL, lyricsEnMode = NULL WHERE id = :songId")
+  suspend fun deleteLyrics(songId: String)
+
+  @Query("UPDATE songs SET lyricsEnText = :enText, lyricsEnMode = :mode WHERE id = :songId")
+  suspend fun saveEnglishLyrics(songId: String, enText: String?, mode: String?)
+
+  @Query("UPDATE songs SET lyricsText = :lyrics, hasLyrics = 1, isSyncedLyrics = :isSynced, lyricsSource = :source, lyricsFetchedAt = :fetchedAt, lyricsStatus = 'READY', lyricsError = NULL, lyricsOriginal = CASE WHEN lyricsOriginal IS NULL THEN :previousLyrics ELSE lyricsOriginal END, lyricsScript = :script WHERE id = :songId")
+  suspend fun forceUpdateLyrics(
+    songId: String,
+    lyrics: String,
+    isSynced: Boolean,
+    source: String,
+    fetchedAt: Long,
+    previousLyrics: String?,
+    script: String?
+  )
+
+  @Query("UPDATE songs SET lyricsStatus = 'NOT_FOUND', lyricsFetchedAt = :fetchedAt, lyricsError = :error WHERE id = :songId AND lyricsLocked = 0")
   suspend fun updateLyricsNotFound(songId: String, fetchedAt: Long, error: String)
 
-  @Query("UPDATE songs SET lyricsStatus = :status, lyricsFetchedAt = :fetchedAt, lyricsError = :error WHERE id = :songId")
+  @Query("UPDATE songs SET lyricsStatus = :status, lyricsFetchedAt = :fetchedAt, lyricsError = :error WHERE id = :songId AND lyricsLocked = 0")
   suspend fun updateLyricsStatus(songId: String, status: String, fetchedAt: Long, error: String)
 
-  @Query("UPDATE songs SET lyricsStatus = 'FETCHING' WHERE id = :songId")
+  @Query("UPDATE songs SET lyricsStatus = 'FETCHING' WHERE id = :songId AND lyricsLocked = 0")
   suspend fun setLyricsFetching(songId: String)
 
-  @Query("SELECT * FROM songs WHERE hasLyrics = 0 AND lyricsStatus != 'SKIPPED_SHORT_AUDIO' AND ((lyricsStatus = 'ERROR' AND (:now - lyricsFetchedAt) > 3600000) OR (lyricsStatus = 'NOT_FOUND' AND (:now - lyricsFetchedAt) > 604800000) OR (lyricsStatus NOT IN ('ERROR', 'NOT_FOUND', 'SKIPPED_SHORT_AUDIO')))")
+  @Query("SELECT * FROM songs WHERE lyricsLocked = 0 AND hasLyrics = 0 AND lyricsStatus != 'SKIPPED_SHORT_AUDIO' AND ((lyricsStatus = 'ERROR' AND (:now - lyricsFetchedAt) > 3600000) OR (lyricsStatus = 'NOT_FOUND' AND (:now - lyricsFetchedAt) > 604800000) OR (lyricsStatus NOT IN ('ERROR', 'NOT_FOUND', 'SKIPPED_SHORT_AUDIO')))")
   suspend fun getSongsNeedingLyrics(now: Long = System.currentTimeMillis()): List<Song>
 
-  @Query("UPDATE songs SET lyricsText = :lyrics, hasLyrics = 1, isSyncedLyrics = :isSynced, lyricsStatus = 'READY' WHERE id = :songId")
+  @Query("UPDATE songs SET lyricsText = :lyrics, hasLyrics = 1, isSyncedLyrics = :isSynced, lyricsStatus = 'READY' WHERE id = :songId AND lyricsLocked = 0")
   suspend fun updateLyrics(songId: String, lyrics: String, isSynced: Boolean)
 
   @Query("SELECT * FROM songs WHERE isHidden = 1 ORDER BY addedAt DESC")
@@ -115,7 +149,7 @@ interface SongDao {
   @Query("DELETE FROM songs WHERE id = :songId")
   suspend fun deleteSongById(songId: String)
 
-  @Query("UPDATE songs SET lyricsText = NULL, hasLyrics = 0, isSyncedLyrics = 0")
+  @Query("UPDATE songs SET lyricsText = NULL, hasLyrics = 0, isSyncedLyrics = 0 WHERE lyricsLocked = 0")
   suspend fun clearAllLyrics()
 
   @Query("UPDATE songs SET albumArtUri = NULL WHERE coverLocked = 0")

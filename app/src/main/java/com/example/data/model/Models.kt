@@ -36,7 +36,12 @@ data class Song(
   val coverFetchedAt: Long = 0L,
   val coverSource: String? = null,
   val playbackError: Int = 0,
-  val lastErrorAt: Long = 0L
+  val lastErrorAt: Long = 0L,
+  val lyricsLocked: Boolean = false,
+  val lyricsOriginal: String? = null,
+  val lyricsScript: String? = null,
+  val lyricsEnText: String? = null,
+  val lyricsEnMode: String? = null
 )
 
 @Entity(tableName = "playlists")

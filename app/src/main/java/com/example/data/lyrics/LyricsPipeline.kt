@@ -22,11 +22,24 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import com.example.utils.ScriptDetector
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
+
+data class LyricsCandidateItem(
+  val source: String,
+  val title: String,
+  val artist: String,
+  val durationSec: Int,
+  val isSynced: Boolean,
+  val detectedScript: String?,
+  val scriptBadge: String?,
+  val previewText: String,
+  val fullLyricsText: String
+)
 
 data class LyricsCandidateDebug(
   val trackName: String,
@@ -115,6 +128,11 @@ class LyricsPipeline(
       val err = "Song with songId '$songId' not found in database"
       Log.e(TAG, err)
       return@withContext false
+    }
+
+    if (song.lyricsLocked && !force) {
+      Log.d(TAG, "Song '${song.title}' (id: $songId) has locked lyrics. Skipping auto lyrics fetch.")
+      return@withContext true
     }
 
     if (!force && song.hasLyrics && !song.lyricsText.isNullOrBlank()) {
@@ -623,13 +641,27 @@ class LyricsPipeline(
     val isSynced = foundSynced != null
 
     if (!finalLyrics.isNullOrBlank()) {
-      songDao.updateLyricsSuccess(
-        songId = song.id,
-        lyrics = finalLyrics,
-        isSynced = isSynced,
-        source = foundSource ?: "Online",
-        fetchedAt = System.currentTimeMillis()
-      )
+      val detectedScript = ScriptDetector.detectScript(finalLyrics)
+      if (song.lyricsLocked) {
+        songDao.forceUpdateLyrics(
+          songId = song.id,
+          lyrics = finalLyrics,
+          isSynced = isSynced,
+          source = foundSource ?: "Online",
+          fetchedAt = System.currentTimeMillis(),
+          previousLyrics = song.lyricsText,
+          script = detectedScript
+        )
+      } else {
+        songDao.updateLyricsSuccess(
+          songId = song.id,
+          lyrics = finalLyrics,
+          isSynced = isSynced,
+          source = foundSource ?: "Online",
+          fetchedAt = System.currentTimeMillis(),
+          script = detectedScript
+        )
+      }
       val finalStatus = if (isSynced) "SYNCED" else "PLAIN"
       currentDebug = currentDebug.copy(
         steps = steps.toList(),

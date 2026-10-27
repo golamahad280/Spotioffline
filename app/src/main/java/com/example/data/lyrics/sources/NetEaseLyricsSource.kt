@@ -218,6 +218,62 @@ class NetEaseLyricsSource : LyricsSource {
     }
   }
 
+  suspend fun searchCandidates(query: String): List<com.example.data.lyrics.LyricsCandidateItem> = withContext(Dispatchers.IO) {
+    val searchUrl = "https://music.163.com/api/search/get/web?s=${enc(query)}&type=1&limit=5"
+    val list = mutableListOf<com.example.data.lyrics.LyricsCandidateItem>()
+    try {
+      val req = Request.Builder()
+        .url(searchUrl)
+        .header("Referer", "https://music.163.com")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        .build()
+      val res = okClient.newCall(req).execute()
+      val body = res.body?.string() ?: return@withContext emptyList()
+      val songsArray = JSONObject(body).optJSONObject("result")?.optJSONArray("songs") ?: return@withContext emptyList()
+      for (i in 0 until songsArray.length().coerceAtMost(4)) {
+        val songObj = songsArray.optJSONObject(i) ?: continue
+        val id = songObj.optLong("id")
+        val name = songObj.optString("name")
+        val durationSec = (songObj.optLong("duration", 0L) / 1000).toInt()
+        val artistNames = mutableListOf<String>()
+        val arr = songObj.optJSONArray("artists")
+        if (arr != null) {
+          for (a in 0 until arr.length()) {
+            arr.optJSONObject(a)?.optString("name")?.let { if (it.isNotBlank()) artistNames.add(it) }
+          }
+        }
+        val artistStr = artistNames.joinToString(", ")
+        val lyricUrl = "https://music.163.com/api/song/lyric?os=pc&id=$id&lv=-1&kv=-1&tv=-1"
+        val lReq = Request.Builder().url(lyricUrl).header("Referer", "https://music.163.com").build()
+        val lRes = okClient.newCall(lReq).execute()
+        val lBody = lRes.body?.string() ?: ""
+        val lJson = JSONObject(lBody)
+        val lrc = lJson.optJSONObject("lrc")?.optString("lyric")
+        if (!lrc.isNullOrBlank()) {
+          val isSynced = LrcParser.hasLrcTimestamps(lrc)
+          val script = com.example.utils.ScriptDetector.detectScript(lrc)
+          val preview = LrcParser.stripTimestamps(lrc).lines().firstOrNull { it.isNotBlank() } ?: ""
+          list.add(
+            com.example.data.lyrics.LyricsCandidateItem(
+              source = "NetEase",
+              title = name,
+              artist = artistStr,
+              durationSec = durationSec,
+              isSynced = isSynced,
+              detectedScript = script,
+              scriptBadge = com.example.utils.ScriptDetector.getScriptBadge(script),
+              previewText = preview,
+              fullLyricsText = lrc
+            )
+          )
+        }
+      }
+    } catch (e: Exception) {
+      CrashLogger.w("NetEaseLyricsSource", "Error in NetEase candidate search", e)
+    }
+    list
+  }
+
   private fun normalize(s: String): String =
     s.lowercase().replace(Regex("[^a-z0-9]"), "").trim()
 

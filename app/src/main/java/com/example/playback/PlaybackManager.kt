@@ -1,5 +1,6 @@
 package com.example.playback
 
+import android.content.ComponentName
 import android.content.Context
 import android.media.audiofx.Equalizer
 import android.net.Uri
@@ -7,15 +8,19 @@ import android.os.CountDownTimer
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import com.example.data.local.SongDao
 import com.example.data.model.RepeatMode
 import com.example.data.model.Song
 import com.example.utils.CrashLogger
+import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -50,6 +55,10 @@ class PlaybackManager(
   private var positionUpdateJob: Job? = null
   private var sleepTimer: CountDownTimer? = null
   private var playerListenerAttached = false
+
+  private var mediaControllerFuture: ListenableFuture<MediaController>? = null
+  private var mediaController: MediaController? = null
+  private val pendingCommands = mutableListOf<(ExoPlayer) -> Unit>()
 
   @Volatile
   private var isRebuildingQueue = false
@@ -107,16 +116,60 @@ class PlaybackManager(
     }
     _repeatMode.value = savedRepeat
 
+    // Bind MediaController once to keep MusicPlaybackService alive and let Media3 manage foreground
+    try {
+      val sessionToken = SessionToken(context, ComponentName(context, MusicPlaybackService::class.java))
+      val future = MediaController.Builder(context, sessionToken).buildAsync()
+      mediaControllerFuture = future
+      future.addListener({
+        try {
+          mediaController = future.get()
+          CrashLogger.i(TAG, "MediaController successfully connected to MusicPlaybackService")
+        } catch (e: Exception) {
+          CrashLogger.e(TAG, "Failed to connect MediaController", e)
+        }
+      }, ContextCompat.getMainExecutor(context))
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Error initiating MediaController binding", e)
+    }
+
     // Observe playerFlow asynchronously
     scope.launch(Dispatchers.Main) {
       MusicPlaybackService.playerFlow.collectLatest { player ->
         if (player != null) {
           attachPlayerListener(player)
+          drainPendingCommands(player)
         }
       }
     }
 
     startPositionTicker()
+  }
+
+  private fun drainPendingCommands(player: ExoPlayer) {
+    val commands = synchronized(pendingCommands) {
+      val list = pendingCommands.toList()
+      pendingCommands.clear()
+      list
+    }
+    commands.forEach { command ->
+      try {
+        command(player)
+      } catch (e: Exception) {
+        CrashLogger.e(TAG, "Error executing pending player command", e)
+      }
+    }
+  }
+
+  fun runWithPlayer(command: (ExoPlayer) -> Unit) {
+    val player = getActivePlayer()
+    if (player != null) {
+      command(player)
+    } else {
+      synchronized(pendingCommands) {
+        pendingCommands.add(command)
+      }
+    }
   }
 
   private fun showToast(message: String) {
@@ -133,14 +186,12 @@ class PlaybackManager(
     }
   }
 
-  private fun getActivePlayer(): ExoPlayer? {
+  fun getActivePlayer(): ExoPlayer? {
     val player = MusicPlaybackService.getInstance()?.player ?: MusicPlaybackService.playerFlow.value
     if (player != null) {
       attachPlayerListener(player)
-    } else {
-      MusicPlaybackService.startOrUpdate(context, _currentSong.value, isPlaying = false)
     }
-    return player ?: MusicPlaybackService.getInstance()?.player
+    return player
   }
 
   private fun attachPlayerListener(player: ExoPlayer) {
@@ -189,7 +240,6 @@ class PlaybackManager(
                 _currentSong.value = list[currentIdx]
               }
             }
-            consecutiveErrors = 0
             playedCurrentSongTimeMs = 0L
           } catch (e: Exception) {
             CrashLogger.e(TAG, "Error in onMediaItemTransition", e)
@@ -199,7 +249,9 @@ class PlaybackManager(
         override fun onPlayerError(error: PlaybackException) {
           CrashLogger.e(TAG, "ExoPlayer error occurred: ${error.message}", error)
           consecutiveErrors++
-          val failedSong = _currentSong.value
+
+          val failedMediaId = player.currentMediaItem?.mediaId
+          val failedSong = _queue.value.firstOrNull { it.id == failedMediaId } ?: _currentSong.value
 
           scope.launch(Dispatchers.IO) {
             if (failedSong != null) {
@@ -223,6 +275,10 @@ class PlaybackManager(
             try {
               if (player.hasNextMediaItem()) {
                 player.seekToNextMediaItem()
+                player.prepare()
+                player.play()
+              } else if (player.repeatMode == Player.REPEAT_MODE_ALL && player.mediaItemCount > 0) {
+                player.seekToDefaultPosition(0)
                 player.prepare()
                 player.play()
               } else {
@@ -349,8 +405,6 @@ class PlaybackManager(
         scope.launch(Dispatchers.IO) {
           songDao.incrementPlayCount(song.id, System.currentTimeMillis())
         }
-
-        MusicPlaybackService.startOrUpdate(context, song, isPlaying = true)
       } else {
         isRebuildingQueue = false
       }
@@ -401,7 +455,6 @@ class PlaybackManager(
     if (_repeatMode.value == RepeatMode.OFF) {
       _isPlaying.value = false
       _currentPositionMs.value = 0L
-      _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = false) }
     } else if (_repeatMode.value == RepeatMode.ALL && _shuffleEnabled.value) {
       // Re-shuffle for a fresh lap
       val current = _currentSong.value
@@ -418,14 +471,12 @@ class PlaybackManager(
       if (player.isPlaying) {
         player.pause()
         _isPlaying.value = false
-        _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = false) }
       } else {
         if (player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) {
           playCurrentQueueItem()
         } else {
           player.play()
           _isPlaying.value = true
-          _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = true) }
         }
       }
     } catch (e: Exception) {
@@ -658,7 +709,6 @@ class PlaybackManager(
           CrashLogger.e(TAG, "Error pausing player on sleep timer finish", e)
         }
         _isPlaying.value = false
-        _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = false) }
       }
     }.start()
   }
@@ -781,6 +831,14 @@ class PlaybackManager(
       equalizer?.release()
     } catch (e: Exception) {
       CrashLogger.e(TAG, "Error releasing equalizer", e)
+    }
+    try {
+      mediaController?.release()
+      mediaController = null
+      mediaControllerFuture?.let { MediaController.releaseFuture(it) }
+      mediaControllerFuture = null
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Error releasing MediaController", e)
     }
   }
 }

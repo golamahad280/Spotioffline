@@ -1,9 +1,11 @@
 package com.example
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -16,13 +18,30 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,8 +49,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.Song
 import com.example.ui.BottomTab
@@ -128,6 +155,31 @@ fun MainAppContent(viewModel: MusicViewModel) {
     permissionLauncher.launch(neededPermissions.toTypedArray())
   }
 
+  // Observe Notification Permission state on lifecycle resume (Android 13+)
+  val lifecycleOwner = LocalLifecycleOwner.current
+  var isNotificationPermissionDenied by remember { mutableStateOf(false) }
+  var isNotificationBannerDismissed by remember { mutableStateOf(false) }
+
+  DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS
+          ) == PackageManager.PERMISSION_GRANTED
+          isNotificationPermissionDenied = !granted
+        } else {
+          isNotificationPermissionDenied = false
+        }
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose {
+      lifecycleOwner.lifecycle.removeObserver(observer)
+    }
+  }
+
   // Collect ViewModel states
   val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
   val isNowPlayingExpanded by viewModel.isNowPlayingExpanded.collectAsStateWithLifecycle()
@@ -199,21 +251,41 @@ fun MainAppContent(viewModel: MusicViewModel) {
         .fillMaxSize()
         .statusBarsPadding()
     ) {
-      when {
-        isSettingsOpen -> {
-          SettingsScreen(
-            totalSongs = allSongs.size,
-            hiddenSongs = hiddenSongs,
-            onRestoreSong = { id -> viewModel.restoreSong(id) },
-            onBack = { viewModel.closeSettings() },
-            onScanClick = { viewModel.scanDeviceAudio() },
-            onClearLyricsCache = { viewModel.clearLyricsCache() },
-            onClearCoverCache = { viewModel.clearCoverCache() },
-            onOpenEqualizer = { viewModel.openEqualizer() },
-            onOpenSleepTimer = { viewModel.openSleepTimer() },
-            onOpenLyricsDebug = { viewModel.openLyricsDebug() }
+      Column(modifier = Modifier.fillMaxSize()) {
+        if (isNotificationPermissionDenied && !isNotificationBannerDismissed) {
+          NotificationPermissionBanner(
+            onOpenSettings = {
+              try {
+                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                  putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                }
+                context.startActivity(intent)
+              } catch (e: Exception) {
+                com.example.utils.CrashLogger.e("MainActivity", "Error opening notification settings", e)
+              }
+            },
+            onDismiss = { isNotificationBannerDismissed = true }
           )
         }
+
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+          when {
+            isSettingsOpen -> {
+              SettingsScreen(
+                totalSongs = allSongs.size,
+                hiddenSongs = hiddenSongs,
+                onRestoreSong = { id -> viewModel.restoreSong(id) },
+                onBack = { viewModel.closeSettings() },
+                onScanClick = { viewModel.scanDeviceAudio() },
+                onClearLyricsCache = { viewModel.clearLyricsCache() },
+                onClearCoverCache = { viewModel.clearCoverCache() },
+                onOpenEqualizer = { viewModel.openEqualizer() },
+                onOpenSleepTimer = { viewModel.openSleepTimer() },
+                onOpenLyricsDebug = { viewModel.openLyricsDebug() },
+                availableSongs = allSongs,
+                playbackManager = viewModel.getPlaybackManager()
+              )
+            }
 
         activePlaylist != null -> {
           val playlistSongs by viewModel.getSongsInPlaylist(activePlaylist!!.id).collectAsStateWithLifecycle(emptyList())
@@ -302,6 +374,8 @@ fun MainAppContent(viewModel: MusicViewModel) {
           }
         }
       }
+    }
+    }
     }
 
     // Persistent Floating Bottom Section (MiniPlayer + BottomNav)
@@ -450,6 +524,68 @@ fun MainAppContent(viewModel: MusicViewModel) {
         onRunSetFireToTheRainTest = { viewModel.runSetFireToTheRainTest() },
         onDismiss = { viewModel.closeLyricsDebug() }
       )
+    }
+  }
+}
+
+@Composable
+fun NotificationPermissionBanner(
+  onOpenSettings: () -> Unit,
+  onDismiss: () -> Unit
+) {
+  Box(
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(horizontal = 12.dp, vertical = 6.dp)
+      .clip(RoundedCornerShape(8.dp))
+      .background(Color(0xFF2E2415))
+      .padding(horizontal = 12.dp, vertical = 8.dp)
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+      Row(
+        modifier = Modifier.weight(1f),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Icon(
+          imageVector = Icons.Default.NotificationsActive,
+          contentDescription = null,
+          tint = Color(0xFFFFB74D),
+          modifier = Modifier.size(20.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+          text = "Playback notifications are disabled. Lock screen controls won't appear.",
+          color = Color(0xFFFFE0B2),
+          fontSize = 12.sp,
+          lineHeight = 16.sp
+        )
+      }
+      TextButton(
+        onClick = onOpenSettings,
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+      ) {
+        Text(
+          text = "Enable",
+          color = com.example.ui.theme.SpotifyGreen,
+          fontSize = 12.sp,
+          fontWeight = FontWeight.Bold
+        )
+      }
+      IconButton(
+        onClick = onDismiss,
+        modifier = Modifier.size(24.dp)
+      ) {
+        Icon(
+          imageVector = Icons.Default.Close,
+          contentDescription = "Dismiss",
+          tint = Color(0xFFFFB74D),
+          modifier = Modifier.size(16.dp)
+        )
+      }
     }
   }
 }

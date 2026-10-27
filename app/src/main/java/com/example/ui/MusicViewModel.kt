@@ -146,6 +146,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     LrcParser.findActiveLineIndex(lines, pos, offset)
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), -1)
 
+  fun getPlaybackManager(): PlaybackManager = playbackManager
+
   init {
     // Check if initial database is empty; if so, generate demo tracks so user has instant playable content!
     viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {

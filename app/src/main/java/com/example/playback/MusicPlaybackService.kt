@@ -9,9 +9,9 @@ import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import androidx.core.app.NotificationCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
@@ -31,30 +31,18 @@ class MusicPlaybackService : MediaSessionService() {
   private val handler = Handler(Looper.getMainLooper())
   private var idleTimeoutRunnable: Runnable? = null
   private var queueEndRunnable: Runnable? = null
+  private var playerListener: Player.Listener? = null
 
   companion object {
     private const val TAG = "MusicPlaybackService"
-    private const val NOTIFICATION_ID = 1
-    private const val CHANNEL_ID = "music_playback_channel"
+    const val NOTIFICATION_ID = 1
+    const val CHANNEL_ID = "music_playback_channel"
 
     private val _playerFlow = MutableStateFlow<ExoPlayer?>(null)
     val playerFlow: StateFlow<ExoPlayer?> = _playerFlow.asStateFlow()
 
     private var instance: MusicPlaybackService? = null
     fun getInstance(): MusicPlaybackService? = instance
-
-    fun startOrUpdate(context: Context, song: com.example.data.model.Song?, isPlaying: Boolean) {
-      val intent = Intent(context, MusicPlaybackService::class.java)
-      try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-          context.startForegroundService(intent)
-        } else {
-          context.startService(intent)
-        }
-      } catch (e: Exception) {
-        CrashLogger.e(TAG, "Failed starting foreground service", e)
-      }
-    }
   }
 
   override fun onCreate() {
@@ -77,8 +65,6 @@ class MusicPlaybackService : MediaSessionService() {
     _playerFlow.value = player
 
     createNotificationChannel()
-    val notification = buildNotification()
-    startForeground(NOTIFICATION_ID, notification)
 
     val pendingIntent = createContentPendingIntent()
     mediaSession = MediaSession.Builder(this, player)
@@ -94,16 +80,34 @@ class MusicPlaybackService : MediaSessionService() {
         setSmallIcon(android.R.drawable.ic_media_play)
       }
     setMediaNotificationProvider(notificationProvider)
+
+    setupPlayerListener()
   }
 
-  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    try {
-      val notification = buildNotification()
-      startForeground(NOTIFICATION_ID, notification)
-    } catch (e: Exception) {
-      CrashLogger.e(TAG, "Error in onStartCommand startForeground", e)
+  private fun setupPlayerListener() {
+    val listener = object : Player.Listener {
+      override fun onIsPlayingChanged(isPlaying: Boolean) {
+        if (isPlaying) {
+          cancelIdleTimeout()
+          cancelQueueEndTimeout()
+        } else {
+          scheduleIdleTimeout()
+        }
+      }
+
+      override fun onPlaybackStateChanged(playbackState: Int) {
+        if (playbackState == Player.STATE_ENDED) {
+          if (player.repeatMode == Player.REPEAT_MODE_OFF) {
+            scheduleQueueEndTimeout()
+          }
+        } else if (playbackState == Player.STATE_READY && player.isPlaying) {
+          cancelIdleTimeout()
+          cancelQueueEndTimeout()
+        }
+      }
     }
-    return super.onStartCommand(intent, flags, startId)
+    player.addListener(listener)
+    playerListener = listener
   }
 
   private fun createContentPendingIntent(): PendingIntent {
@@ -124,20 +128,10 @@ class MusicPlaybackService : MediaSessionService() {
       val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
       val channel = NotificationChannel(CHANNEL_ID, channelName, NotificationManager.IMPORTANCE_LOW).apply {
         description = "SpotiOffline Music Playback"
+        lockscreenVisibility = Notification.VISIBILITY_PUBLIC
       }
       notificationManager.createNotificationChannel(channel)
     }
-  }
-
-  private fun buildNotification(): Notification {
-    val pendingIntent = createContentPendingIntent()
-    return NotificationCompat.Builder(this, CHANNEL_ID)
-      .setContentTitle("SpotiOffline")
-      .setContentText("Playing music")
-      .setSmallIcon(android.R.drawable.ic_media_play)
-      .setContentIntent(pendingIntent)
-      .setOngoing(true)
-      .build()
   }
 
   override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
@@ -146,8 +140,6 @@ class MusicPlaybackService : MediaSessionService() {
     super.onTaskRemoved(rootIntent)
     if (!player.isPlaying && !player.playWhenReady) {
       try {
-        player.pause()
-        stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
       } catch (e: Exception) {
         CrashLogger.e(TAG, "Error in onTaskRemoved", e)
@@ -155,12 +147,11 @@ class MusicPlaybackService : MediaSessionService() {
     }
   }
 
-  fun scheduleIdleTimeout() {
+  private fun scheduleIdleTimeout() {
     cancelIdleTimeout()
     idleTimeoutRunnable = Runnable {
       if (!player.isPlaying) {
         try {
-          stopForeground(STOP_FOREGROUND_REMOVE)
           stopSelf()
         } catch (e: Exception) {
           CrashLogger.e(TAG, "Error in idleTimeoutRunnable", e)
@@ -170,17 +161,16 @@ class MusicPlaybackService : MediaSessionService() {
     handler.postDelayed(idleTimeoutRunnable!!, 10 * 60 * 1000L)
   }
 
-  fun cancelIdleTimeout() {
+  private fun cancelIdleTimeout() {
     idleTimeoutRunnable?.let { handler.removeCallbacks(it) }
     idleTimeoutRunnable = null
   }
 
-  fun scheduleQueueEndTimeout() {
+  private fun scheduleQueueEndTimeout() {
     cancelQueueEndTimeout()
     queueEndRunnable = Runnable {
       if (!player.isPlaying) {
         try {
-          stopForeground(STOP_FOREGROUND_REMOVE)
           stopSelf()
         } catch (e: Exception) {
           CrashLogger.e(TAG, "Error in queueEndTimeoutRunnable", e)
@@ -190,7 +180,7 @@ class MusicPlaybackService : MediaSessionService() {
     handler.postDelayed(queueEndRunnable!!, 30 * 1000L)
   }
 
-  fun cancelQueueEndTimeout() {
+  private fun cancelQueueEndTimeout() {
     queueEndRunnable?.let { handler.removeCallbacks(it) }
     queueEndRunnable = null
   }
@@ -198,6 +188,10 @@ class MusicPlaybackService : MediaSessionService() {
   override fun onDestroy() {
     cancelIdleTimeout()
     cancelQueueEndTimeout()
+    playerListener?.let {
+      player.removeListener(it)
+      playerListener = null
+    }
     _playerFlow.value = null
     mediaSession?.run {
       player.release()

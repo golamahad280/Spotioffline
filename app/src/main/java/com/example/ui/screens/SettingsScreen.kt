@@ -74,6 +74,16 @@ import com.example.ui.theme.SpotifyTextMuted
 import com.example.ui.theme.SpotifyTextSecondary
 import com.example.ui.theme.SpotifyWhite
 import com.example.utils.CrashLogger
+import android.Manifest
+import android.app.NotificationManager
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.compose.material.icons.filled.Notifications
+import androidx.core.content.ContextCompat
+import com.example.playback.MusicPlaybackService
+import com.example.playback.PlaybackManager
+import com.example.playback.RealStressTester
+import com.example.playback.StressTestProgress
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -91,6 +101,8 @@ fun SettingsScreen(
   onOpenEqualizer: () -> Unit,
   onOpenSleepTimer: () -> Unit,
   onOpenLyricsDebug: () -> Unit,
+  availableSongs: List<Song> = emptyList(),
+  playbackManager: PlaybackManager? = null,
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
@@ -231,7 +243,7 @@ fun SettingsScreen(
       }
     }
 
-    // Stability & Crash Log Section
+    // Stability, Notifications & Crash Log Section
     item {
       var showStressTestDialog by remember { mutableStateOf(false) }
 
@@ -277,8 +289,8 @@ fun SettingsScreen(
               Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = null, tint = SpotifyGreen)
               Spacer(modifier = Modifier.width(10.dp))
               Column {
-                Text("Run Stress Test (Developer)", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Text("Execute 5 seeds x 2000 monkey actions & verify state", color = SpotifyTextSecondary, fontSize = 11.sp)
+                Text("Run Real Stress Test (Developer)", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text(">=3 min run with 100 real actions driving player & real files", color = SpotifyTextSecondary, fontSize = 11.sp)
               }
             }
             Text("Run Test >", color = SpotifyGreen, fontSize = 13.sp)
@@ -286,8 +298,17 @@ fun SettingsScreen(
         }
       }
 
+      Spacer(modifier = Modifier.height(16.dp))
+
+      SectionTitle("NOTIFICATION DEBUG (DEVELOPER)")
+      NotificationDebugCard()
+
       if (showStressTestDialog) {
-        StressTestDialog(onDismiss = { showStressTestDialog = false })
+        StressTestDialog(
+          availableSongs = availableSongs,
+          playbackManager = playbackManager,
+          onDismiss = { showStressTestDialog = false }
+        )
       }
     }
 
@@ -907,23 +928,121 @@ private fun SettingToggleRow(
 }
 
 @Composable
-fun StressTestDialog(onDismiss: () -> Unit) {
+fun NotificationDebugCard() {
+  val context = LocalContext.current
+  var permStatus by remember { mutableStateOf("Checking...") }
+  var serviceStatus by remember { mutableStateOf("Checking...") }
+  var notifStatus by remember { mutableStateOf("Checking...") }
+  var channelInfo by remember { mutableStateOf("Checking...") }
+  var actionsInfo by remember { mutableStateOf("Checking...") }
+
+  fun queryStatus() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+      permStatus = if (granted) "Granted" else "Denied"
+    } else {
+      permStatus = "Granted (Pre-Android 13)"
+    }
+
+    val isRunning = MusicPlaybackService.getInstance() != null
+    serviceStatus = if (isRunning) "Running (Active)" else "Stopped"
+
+    val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val channel = nm?.getNotificationChannel(MusicPlaybackService.CHANNEL_ID)
+      channelInfo = if (channel != null) {
+        "${channel.name} (ID: ${channel.id}, Importance: ${channel.importance})"
+      } else {
+        "Channel not created"
+      }
+    } else {
+      channelInfo = "Legacy channel"
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && nm != null) {
+      val active = nm.activeNotifications.firstOrNull { it.id == MusicPlaybackService.NOTIFICATION_ID }
+      if (active != null) {
+        notifStatus = "Posted (ID ${active.id})"
+        val acts = active.notification.actions
+        actionsInfo = if (acts != null) "${acts.size} actions configured" else "No actions"
+      } else {
+        notifStatus = "Not currently posted"
+        actionsInfo = "N/A"
+      }
+    } else {
+      notifStatus = "Unknown / Pre-M"
+      actionsInfo = "N/A"
+    }
+  }
+
+  androidx.compose.runtime.LaunchedEffect(Unit) {
+    queryStatus()
+  }
+
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(12.dp))
+      .background(SpotifyCardElevated)
+      .padding(16.dp),
+    verticalArrangement = Arrangement.spacedBy(8.dp)
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(imageVector = Icons.Default.Notifications, contentDescription = null, tint = SpotifyGreen)
+        Spacer(modifier = Modifier.width(10.dp))
+        Text("Notification & Service Status", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+      }
+      IconButton(onClick = { queryStatus() }) {
+        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh", tint = SpotifyGreen)
+      }
+    }
+
+    HorizontalDivider(color = SpotifyDivider)
+
+    DebugRow("POST_NOTIFICATIONS", permStatus, if (permStatus.startsWith("Granted")) SpotifyGreen else Color(0xFFFF5252))
+    DebugRow("MusicPlaybackService", serviceStatus, if (serviceStatus.startsWith("Running")) SpotifyGreen else SpotifyTextSecondary)
+    DebugRow("Active Notification", notifStatus, if (notifStatus.startsWith("Posted")) SpotifyGreen else SpotifyTextSecondary)
+    DebugRow("Channel", channelInfo, SpotifyTextSecondary)
+    DebugRow("Actions", actionsInfo, SpotifyTextSecondary)
+  }
+}
+
+@Composable
+fun DebugRow(label: String, value: String, valueColor: Color) {
+  Row(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Text(label, color = SpotifyTextSecondary, fontSize = 12.sp)
+    Text(value, color = valueColor, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+  }
+}
+
+@Composable
+fun StressTestDialog(
+  availableSongs: List<Song>,
+  playbackManager: PlaybackManager?,
+  onDismiss: () -> Unit
+) {
   val context = LocalContext.current
   val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
 
   var isRunning by remember { mutableStateOf(false) }
   var isFinished by remember { mutableStateOf(false) }
-  var currentSeed by remember { mutableStateOf(0) }
-  var currentStep by remember { mutableStateOf(0) }
-  var totalSteps by remember { mutableStateOf(10000) } // 5 seeds x 2000 steps
+  var progress by remember { mutableStateOf<StressTestProgress?>(null) }
   var logReport by remember { mutableStateOf("") }
-  var errorCount by remember { mutableStateOf(0) }
 
   AlertDialog(
     onDismissRequest = { if (!isRunning) onDismiss() },
     title = {
       Text(
-        text = if (isFinished) "Stress Test Report" else "On-Device Stress Test",
+        text = if (isFinished) "Real Stress Test Report" else "On-Device Real Stress Test",
         color = SpotifyWhite,
         fontSize = 16.sp,
         fontWeight = FontWeight.Bold
@@ -933,19 +1052,25 @@ fun StressTestDialog(onDismiss: () -> Unit) {
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .height(300.dp)
+          .height(320.dp)
       ) {
         if (!isRunning && !isFinished) {
           Text(
-            text = "This developer tool executes 5 random seeds x 2000 monkey actions (10,000 total steps) testing play/pause, seek, next/prev, shuffle, repeat, and queue mutations to ensure zero crashes and complete queue stability.",
+            text = "This real stress tester drives PlaybackManager and ExoPlayer on real audio files for >= 3 minutes (180s), performing 100 actual playback actions (play, pause, next, seek, shuffle, repeat, queue mutations), allowing real decoding, and continuously validating 6 system invariants.",
             color = SpotifyTextSecondary,
             fontSize = 13.sp,
             lineHeight = 18.sp
           )
-          Spacer(modifier = Modifier.height(16.dp))
+          Spacer(modifier = Modifier.height(12.dp))
           Text(
-            text = "Click 'Start Test' to begin.",
+            text = "Playable tracks in pool: ${availableSongs.count { it.playbackError == 0 }} (samples up to 60)",
             color = SpotifyGreen,
+            fontSize = 12.sp
+          )
+          Spacer(modifier = Modifier.height(12.dp))
+          Text(
+            text = "Click 'Start Real Test' to begin.",
+            color = SpotifyWhite,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold
           )
@@ -955,18 +1080,28 @@ fun StressTestDialog(onDismiss: () -> Unit) {
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
           ) {
+            val elapsed = progress?.elapsedSeconds ?: 0L
+            val current = progress?.currentStep ?: 0
+            val total = progress?.totalSteps ?: 100
+            val progFraction = (elapsed.toFloat() / 180f).coerceIn(0f, 1f)
+
             androidx.compose.material3.LinearProgressIndicator(
-              progress = { if (totalSteps > 0) currentStep.toFloat() / totalSteps.toFloat() else 0f },
+              progress = { progFraction },
               modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
               color = SpotifyGreen,
               trackColor = SpotifyDivider,
             )
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Testing Seed $currentSeed / 5", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("Real Stress Test Running", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(4.dp))
-            Text("Step $currentStep / $totalSteps", color = SpotifyGreen, fontSize = 13.sp)
+            Text("Step $current / $total", color = SpotifyGreen, fontSize = 13.sp)
             Spacer(modifier = Modifier.height(4.dp))
-            Text("Errors encountered: $errorCount", color = if (errorCount == 0) SpotifyWhite else Color(0xFFFF5252), fontSize = 12.sp)
+            Text("Elapsed: ${elapsed}s / 180s (min 60s)", color = SpotifyTextSecondary, fontSize = 12.sp)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Action: ${progress?.currentAction ?: "Starting..."}", color = SpotifyWhite, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(modifier = Modifier.height(4.dp))
+            val viol = progress?.violationsCount ?: 0
+            Text("Invariant Violations: $viol", color = if (viol == 0) SpotifyGreen else Color(0xFFFF5252), fontSize = 12.sp, fontWeight = FontWeight.Bold)
           }
         } else {
           Column(
@@ -988,59 +1123,26 @@ fun StressTestDialog(onDismiss: () -> Unit) {
       if (!isRunning && !isFinished) {
         Button(
           onClick = {
-            isRunning = true
-            isFinished = false
-            currentStep = 0
-            errorCount = 0
-            coroutineScope.launch(kotlinx.coroutines.Dispatchers.Default) {
-              val sb = StringBuilder()
-              sb.append("=== SPOTIOFFLINE STRESS TEST REPORT ===\n")
-              sb.append("Timestamp: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())}\n")
-              sb.append("Seeds: 5 | Steps per seed: 2000 | Total steps: 10000\n\n")
-
-              var totalErrors = 0
-              val seeds = listOf(42L, 123L, 999L, 2026L, 7777L)
-              val actions = listOf("play", "pause", "next", "previous", "seek", "toggle_shuffle", "toggle_repeat", "queue_reorder")
-
-              val startTime = System.currentTimeMillis()
-
-              for ((index, seed) in seeds.withIndex()) {
-                currentSeed = index + 1
-                sb.append("[Seed ${index + 1}/5 (Seed ID $seed)] Starting 2000 steps...\n")
-                val random = kotlin.random.Random(seed)
-
-                for (step in 1..2000) {
-                  currentStep = index * 2000 + step
-                  val action = actions[random.nextInt(actions.size)]
-                  try {
-                    // Simulate step execution & state verification
-                    if (step % 500 == 0) {
-                      kotlinx.coroutines.delay(10)
-                    }
-                  } catch (e: Exception) {
-                    totalErrors++
-                    errorCount = totalErrors
-                    sb.append("  ERROR at step $step ($action): ${e.message}\n")
-                  }
+            if (playbackManager != null) {
+              isRunning = true
+              isFinished = false
+              coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                val tester = RealStressTester(context, playbackManager)
+                val report = tester.run(availableSongs) { p ->
+                  progress = p
                 }
-                sb.append("[Seed ${index + 1}/5] Completed 2000 steps successfully. Queue consistency verified.\n\n")
+                logReport = report
+                isRunning = false
+                isFinished = true
               }
-
-              val durationMs = System.currentTimeMillis() - startTime
-              sb.append("=== STRESS TEST COMPLETED ===\n")
-              sb.append("Total Actions: 10,000\n")
-              sb.append("Total Errors: $totalErrors\n")
-              sb.append("Execution Time: ${durationMs}ms\n")
-              sb.append("Result: ${if (totalErrors == 0) "PASSED ✓ (100% Stable)" else "FAILED ($totalErrors errors)"}\n")
-
-              logReport = sb.toString()
-              isRunning = false
+            } else {
+              logReport = "ERROR: PlaybackManager not available."
               isFinished = true
             }
           },
           colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen)
         ) {
-          Text("Start Test", color = SpotifyBlack, fontWeight = FontWeight.Bold)
+          Text("Start Real Test", color = SpotifyBlack, fontWeight = FontWeight.Bold)
         }
       } else if (isFinished) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1049,7 +1151,7 @@ fun StressTestDialog(onDismiss: () -> Unit) {
               val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_TEXT, logReport)
-                putExtra(Intent.EXTRA_SUBJECT, "SpotiOffline Stress Test Report")
+                putExtra(Intent.EXTRA_SUBJECT, "SpotiOffline Real Stress Test Report")
               }
               context.startActivity(Intent.createChooser(sendIntent, "Share Report"))
             },

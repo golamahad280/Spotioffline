@@ -74,6 +74,7 @@ import com.example.ui.theme.SpotifyTextMuted
 import com.example.ui.theme.SpotifyTextSecondary
 import com.example.ui.theme.SpotifyWhite
 import com.example.utils.CrashLogger
+import com.example.ui.components.*
 import android.Manifest
 import android.app.NotificationManager
 import android.content.pm.PackageManager
@@ -152,157 +153,100 @@ fun SettingsScreen(
 
     // Storage & Library Section
     item {
-      SectionTitle("LIBRARY & STORAGE")
-      Box(
-        modifier = Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(12.dp))
-          .background(SpotifyCardElevated)
-          .padding(16.dp)
-      ) {
-        Column {
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+      SettingsSection("LIBRARY & STORAGE")
+      SettingsCard {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(imageVector = Icons.Default.Storage, contentDescription = null, tint = SpotifyGreen)
+            Spacer(modifier = Modifier.width(10.dp))
+            Text("Total Offline Audio Tracks", color = SpotifyWhite, fontSize = 14.sp)
+          }
+          Text("$totalSongs tracks", color = SpotifyGreen, fontWeight = FontWeight.Bold)
+        }
+
+        HorizontalDivider(color = SpotifyDivider)
+
+        Button(
+          onClick = onScanClick,
+          colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Icon(imageVector = Icons.Default.Refresh, contentDescription = null, tint = SpotifyBlack)
+          Spacer(modifier = Modifier.width(8.dp))
+          Text("Re-Scan Device For Songs", color = SpotifyBlack, fontWeight = FontWeight.Bold)
+        }
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          OutlinedButton(
+            onClick = {
+              onClearLyricsCache()
+              Toast.makeText(context, "Lyrics cache cleared", Toast.LENGTH_SHORT).show()
+            },
+            modifier = Modifier.weight(1f)
           ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              Icon(imageVector = Icons.Default.Storage, contentDescription = null, tint = SpotifyGreen)
-              Spacer(modifier = Modifier.width(10.dp))
-              Text("Total Offline Audio Tracks", color = SpotifyWhite, fontSize = 14.sp)
-            }
-            Text("$totalSongs tracks", color = SpotifyGreen, fontWeight = FontWeight.Bold)
+            Text("Clear Lyrics", color = SpotifyWhite, fontSize = 12.sp)
           }
 
-          Spacer(modifier = Modifier.height(14.dp))
-          HorizontalDivider(color = SpotifyDivider)
-          Spacer(modifier = Modifier.height(14.dp))
-
-          Button(
-            onClick = onScanClick,
-            colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
-            modifier = Modifier.fillMaxWidth()
+          OutlinedButton(
+            onClick = {
+              onClearCoverCache()
+              Toast.makeText(context, "Cover cache cleared", Toast.LENGTH_SHORT).show()
+            },
+            modifier = Modifier.weight(1f)
           ) {
-            Icon(imageVector = Icons.Default.Refresh, contentDescription = null, tint = SpotifyBlack)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Re-Scan Device For Songs", color = SpotifyBlack, fontWeight = FontWeight.Bold)
-          }
-
-          Spacer(modifier = Modifier.height(10.dp))
-
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-          ) {
-            OutlinedButton(
-              onClick = {
-                onClearLyricsCache()
-                Toast.makeText(context, "Lyrics cache cleared", Toast.LENGTH_SHORT).show()
-              },
-              modifier = Modifier.weight(1f)
-            ) {
-              Text("Clear Lyrics", color = SpotifyWhite, fontSize = 12.sp)
-            }
-
-            OutlinedButton(
-              onClick = {
-                onClearCoverCache()
-                Toast.makeText(context, "Cover cache cleared", Toast.LENGTH_SHORT).show()
-              },
-              modifier = Modifier.weight(1f)
-            ) {
-              Text("Clear Covers", color = SpotifyWhite, fontSize = 12.sp)
-            }
-          }
-
-          Spacer(modifier = Modifier.height(12.dp))
-          HorizontalDivider(color = SpotifyDivider)
-          Spacer(modifier = Modifier.height(10.dp))
-
-          // Hidden Songs Row
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .clickable { showHiddenSongsDialog = true }
-              .padding(vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              Icon(imageVector = Icons.Default.VisibilityOff, contentDescription = null, tint = SpotifyWhite)
-              Spacer(modifier = Modifier.width(10.dp))
-              Text("Hidden Songs", color = SpotifyWhite, fontSize = 14.sp)
-            }
-            Text(
-              if (hiddenSongs.isEmpty()) "0 hidden >" else "${hiddenSongs.size} hidden >",
-              color = if (hiddenSongs.isNotEmpty()) SpotifyGreen else SpotifyTextSecondary,
-              fontSize = 13.sp
-            )
+            Text("Clear Covers", color = SpotifyWhite, fontSize = 12.sp)
           }
         }
+
+        HorizontalDivider(color = SpotifyDivider)
+
+        SettingsRow(
+          icon = Icons.Default.VisibilityOff,
+          title = "Hidden Songs",
+          trailing = if (hiddenSongs.isEmpty()) "0 hidden >" else "${hiddenSongs.size} hidden >",
+          onClick = { showHiddenSongsDialog = true }
+        )
       }
     }
 
-    // Stability, Notifications & Crash Log Section
+    // Developer Section
     item {
       var showStressTestDialog by remember { mutableStateOf(false) }
 
-      SectionTitle("STABILITY & LOGS")
-      Box(
-        modifier = Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(12.dp))
-          .background(SpotifyCardElevated)
-          .padding(16.dp)
-      ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .clickable { showCrashLogsDialog = true }
-              .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              Icon(imageVector = Icons.Default.BugReport, contentDescription = null, tint = SpotifyGreen)
-              Spacer(modifier = Modifier.width(10.dp))
-              Column {
-                Text("Crash & Stability Log", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Text("View stack traces, exit reasons & ring buffer", color = SpotifyTextSecondary, fontSize = 11.sp)
-              }
-            }
-            Text("View Logs >", color = SpotifyGreen, fontSize = 13.sp)
-          }
+      SettingsSection("DEVELOPER")
+      SettingsCard {
+        SettingsRow(
+          icon = Icons.Default.BugReport,
+          title = "Crash & Stability Log",
+          subtitle = "View stack traces, exit reasons & ring buffer",
+          trailing = "View Logs >",
+          onClick = { showCrashLogsDialog = true }
+        )
 
-          HorizontalDivider(color = SpotifyDivider)
+        HorizontalDivider(color = SpotifyDivider)
 
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .clickable { showStressTestDialog = true }
-              .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = null, tint = SpotifyGreen)
-              Spacer(modifier = Modifier.width(10.dp))
-              Column {
-                Text("Run Real Stress Test (Developer)", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Text(">=3 min run with 100 real actions driving player & real files", color = SpotifyTextSecondary, fontSize = 11.sp)
-              }
-            }
-            Text("Run Test >", color = SpotifyGreen, fontSize = 13.sp)
-          }
-        }
+        SettingsRow(
+          icon = Icons.Default.AutoAwesome,
+          title = "Run Real Stress Test",
+          subtitle = ">=3 min run with 100 real actions driving player & real files",
+          trailing = "Run Test >",
+          onClick = { showStressTestDialog = true }
+        )
+
+        HorizontalDivider(color = SpotifyDivider)
+
+        // Notification Debug integration - keeping it as a card/sub-section or directly here
+        // For now, simple integration
+        NotificationDebugCard(modifier = Modifier.padding(top = 8.dp))
       }
-
-      Spacer(modifier = Modifier.height(16.dp))
-
-      SectionTitle("NOTIFICATION DEBUG (DEVELOPER)")
-      NotificationDebugCard()
-
+      
       if (showStressTestDialog) {
         StressTestDialog(
           availableSongs = availableSongs,
@@ -928,7 +872,7 @@ private fun SettingToggleRow(
 }
 
 @Composable
-fun NotificationDebugCard() {
+fun NotificationDebugCard(modifier: Modifier = Modifier) {
   val context = LocalContext.current
   var permStatus by remember { mutableStateOf("Checking...") }
   var serviceStatus by remember { mutableStateOf("Checking...") }
@@ -965,7 +909,7 @@ fun NotificationDebugCard() {
   }
 
   Column(
-    modifier = Modifier
+    modifier = modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(12.dp))
       .background(SpotifyCardElevated)

@@ -67,6 +67,7 @@ fun LyricsScreen(
 
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
+  val snackbarHostState = remember { SnackbarHostState() }
 
   val dominantColor = remember(song.id) {
     ImageUtils.getFallbackColorForTrack(song.title)
@@ -145,6 +146,20 @@ fun LyricsScreen(
       song = song,
       onSave = { text, isSynced ->
         onSaveManualLyrics(text, isSynced)
+        if (!isSynced) {
+          scope.launch {
+            snackbarHostState.showSnackbar(
+              message = "Lyrics saved, not synced yet",
+              actionLabel = "Tap to sync",
+              duration = SnackbarDuration.Long
+            ).let { result ->
+              if (result == SnackbarResult.ActionPerformed) {
+                tapToSyncPlainLines = text.lines().filter { it.isNotBlank() }
+                showTapToSync = true
+              }
+            }
+          }
+        }
       },
       onAutoSyncAi = onAutoSyncWithAi,
       onRefetchOnline = { s -> onRetryFetch?.invoke(s) },
@@ -414,6 +429,30 @@ fun LyricsScreen(
           }
         }
 
+        // Sync Banner
+        if (!song.isSyncedLyrics && !displayLyricsText.isNullOrBlank() && displayLines.isEmpty()) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp)
+                    .clickable {
+                        tapToSyncPlainLines = displayLyricsText.lines().filter { it.isNotBlank() }
+                        showTapToSync = true
+                    },
+                color = SpotifyGreen,
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    text = "Sync these lyrics (Tap to sync)",
+                    color = SpotifyBlack,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(16.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(12.dp))
 
         // Main Lyrics Content
@@ -527,6 +566,11 @@ fun LyricsScreen(
             }
           }
         }
+      }
+        SnackbarHost(
+          hostState = snackbarHostState,
+          modifier = Modifier.align(Alignment.BottomCenter)
+        )
       }
     }
   }

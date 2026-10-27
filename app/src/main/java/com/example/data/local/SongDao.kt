@@ -123,4 +123,10 @@ interface SongDao {
 
   @Query("SELECT COUNT(*) FROM songs WHERE isHidden = 0")
   suspend fun getSongCount(): Int
+
+  @Query("UPDATE songs SET playbackError = :error, lastErrorAt = :errorAt WHERE id = :songId")
+  suspend fun updatePlaybackError(songId: String, error: Int, errorAt: Long)
+
+  @Query("UPDATE songs SET playbackError = 0 WHERE id = :songId")
+  suspend fun clearPlaybackError(songId: String)
 }

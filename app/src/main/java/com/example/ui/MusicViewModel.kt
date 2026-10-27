@@ -485,7 +485,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
   ) {
     viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
       val uris = songs.mapNotNull {
-        try { Uri.parse(it.uriString) } catch (_: Exception) { null }
+        try { Uri.parse(it.uriString) } catch (e: Exception) { CrashLogger.e("MusicViewModel", "Error parsing URI ${it.uriString}", e); null }
       }
 
       // Android 11+ (API 30+) MediaStore.createDeleteRequest
@@ -503,7 +503,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
       val deletedIds = mutableListOf<String>()
       for (song in songs) {
         var deleted = false
-        val uri = try { Uri.parse(song.uriString) } catch (_: Exception) { null }
+        val uri = try { Uri.parse(song.uriString) } catch (e: Exception) { CrashLogger.e("MusicViewModel", "Error parsing URI ${song.uriString}", e); null }
         if (uri != null) {
           try {
             val count = getApplication<Application>().contentResolver.delete(uri, null, null)
@@ -535,6 +535,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
       if (deletedIds.isNotEmpty()) {
         finishSongDeletion(deletedIds)
       }
+    }
+  }
+
+  fun retrySong(song: Song) {
+    viewModelScope.launch(Dispatchers.IO + coroutineExceptionHandler) {
+      songDao.clearPlaybackError(song.id)
     }
   }
 

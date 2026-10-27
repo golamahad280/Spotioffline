@@ -17,13 +17,14 @@ object SmartShuffle {
     currentSong: Song?,
     random: Random = Random.Default
   ): List<Song> {
-    if (songs.isEmpty()) return emptyList()
+    val validSongs = songs.filter { it.playbackError == 0 }
+    if (validSongs.isEmpty()) return emptyList()
 
-    val current = songs.firstOrNull { it.id == currentSong?.id }
+    val current = validSongs.firstOrNull { it.id == currentSong?.id }
     val candidates = if (current != null) {
-      songs.filter { it.id != current.id }
+      validSongs.filter { it.id != current.id }
     } else {
-      songs.toList()
+      validSongs.toList()
     }
 
     if (candidates.isEmpty()) {

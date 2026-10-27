@@ -387,7 +387,8 @@ class CoverPipeline(
       val req = Request.Builder().url(imageUrl).head().build()
       val res = okClient.newCall(req).execute()
       res.isSuccessful
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+      CrashLogger.w(TAG, "URL reachability check failed for $imageUrl", e)
       false
     }
   }
@@ -480,5 +481,5 @@ class CoverPipeline(
     s.lowercase().replace(Regex("[^a-z0-9]"), "").trim()
 
   private fun enc(s: String): String =
-    try { URLEncoder.encode(s, "UTF-8") } catch (_: Exception) { s }
+    try { URLEncoder.encode(s, "UTF-8") } catch (e: Exception) { CrashLogger.e(TAG, "URLEncoder error", e); s }
 }

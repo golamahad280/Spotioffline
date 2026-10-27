@@ -34,7 +34,9 @@ data class Song(
   val coverLocked: Boolean = false,
   val coverStatus: String = "IDLE",
   val coverFetchedAt: Long = 0L,
-  val coverSource: String? = null
+  val coverSource: String? = null,
+  val playbackError: Int = 0,
+  val lastErrorAt: Long = 0L
 )
 
 @Entity(tableName = "playlists")

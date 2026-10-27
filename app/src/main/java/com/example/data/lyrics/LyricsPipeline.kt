@@ -14,6 +14,7 @@ import com.example.data.lyrics.sources.OpenAILyricsSource
 import com.example.data.lyrics.sources.GeniusLyricsSource
 import com.example.data.lyrics.sources.LyricsOvhLyricsSource
 import com.example.data.lyrics.sources.NetEaseLyricsSource
+import com.example.utils.CrashLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -256,7 +257,8 @@ class LyricsPipeline(
           } else {
             val snippet = try {
               res.errorBody()?.string()?.take(200) ?: res.message()
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+              CrashLogger.e(TAG, "Error reading error body snippet", e)
               res.message()
             }
             lastBodySnippet = snippet.ifBlank { "HTTP $lastCode" }
@@ -568,7 +570,8 @@ class LyricsPipeline(
           mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_WRITER)
             ?: mmr.extractMetadata(101)
             ?: ""
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+          CrashLogger.w(TAG, "Error extracting embedded lyrics metadata", e)
           ""
         }
         mmr.release()
@@ -972,7 +975,8 @@ class LyricsPipeline(
   private fun enc(s: String): String {
     return try {
       URLEncoder.encode(s, "UTF-8")
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "URLEncoder error", e)
       s
     }
   }

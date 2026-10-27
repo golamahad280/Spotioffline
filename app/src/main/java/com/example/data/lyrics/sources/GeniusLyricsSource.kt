@@ -85,5 +85,5 @@ class GeniusLyricsSource(private val context: Context) : LyricsSource {
   }
 
   private fun enc(s: String): String =
-    try { URLEncoder.encode(s, "UTF-8") } catch (_: Exception) { s }
+    try { URLEncoder.encode(s, "UTF-8") } catch (e: Exception) { CrashLogger.e("GeniusLyricsSource", "URLEncoder error", e); s }
 }

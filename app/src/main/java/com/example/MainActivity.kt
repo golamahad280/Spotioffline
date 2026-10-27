@@ -295,7 +295,8 @@ fun MainAppContent(viewModel: MusicViewModel) {
                 onChangeCover = { songId, uri -> viewModel.changeCustomCover(songId, uri) },
                 onRemoveCustomCover = { song -> viewModel.removeCustomCover(song) },
                 onSearchCoverAgain = { song -> viewModel.searchCoverAgain(song) },
-                onSearchCoverCustomName = { song, query -> viewModel.searchCoverCustomName(song, query) }
+                onSearchCoverCustomName = { song, query -> viewModel.searchCoverCustomName(song, query) },
+                onRetrySong = { song -> viewModel.retrySong(song) }
               )
             }
           }

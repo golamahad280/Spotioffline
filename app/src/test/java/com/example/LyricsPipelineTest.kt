@@ -56,6 +56,8 @@ class LyricsPipelineTest {
         override suspend fun updateCoverStatus(songId: String, status: String, fetchedAt: Long, source: String?) {}
         override suspend fun getSongsNeedingCover(now: Long): List<Song> = emptyList()
         override suspend fun getSongCount(): Int = 0
+        override suspend fun updatePlaybackError(songId: String, error: Int, errorAt: Long) {}
+        override suspend fun clearPlaybackError(songId: String) {}
       }
     )
   }

@@ -4,13 +4,18 @@ import android.content.Context
 import android.media.audiofx.Equalizer
 import android.net.Uri
 import android.os.CountDownTimer
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.example.data.local.SongDao
 import com.example.data.model.RepeatMode
 import com.example.data.model.Song
+import com.example.utils.CrashLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,8 +23,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class EqualizerBand(
   val bandIndex: Short,
@@ -35,6 +42,7 @@ class PlaybackManager(
   private val scope: CoroutineScope
 ) {
 
+  private val TAG = "PlaybackManager"
   private val prefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
   private var originalQueue: List<Song> = emptyList()
 
@@ -42,6 +50,11 @@ class PlaybackManager(
   private var positionUpdateJob: Job? = null
   private var sleepTimer: CountDownTimer? = null
   private var playerListenerAttached = false
+
+  @Volatile
+  private var isRebuildingQueue = false
+  private var consecutiveErrors = 0
+  private var playedCurrentSongTimeMs = 0L
 
   private val _currentSong = MutableStateFlow<Song?>(null)
   val currentSong: StateFlow<Song?> = _currentSong.asStateFlow()
@@ -88,79 +101,143 @@ class PlaybackManager(
     val savedRepeatStr = prefs.getString("repeat_mode", RepeatMode.OFF.name)
     val savedRepeat = try {
       RepeatMode.valueOf(savedRepeatStr ?: RepeatMode.OFF.name)
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Error parsing saved repeat mode", e)
       RepeatMode.OFF
     }
     _repeatMode.value = savedRepeat
 
-    ensurePlayerListener()
+    // Observe playerFlow asynchronously
+    scope.launch(Dispatchers.Main) {
+      MusicPlaybackService.playerFlow.collectLatest { player ->
+        if (player != null) {
+          attachPlayerListener(player)
+        }
+      }
+    }
+
     startPositionTicker()
   }
 
-  private fun getOrCreatePlayer(): ExoPlayer {
-    val servicePlayer = MusicPlaybackService.getInstance()?.player
-    if (servicePlayer != null) {
-      android.util.Log.d("PlaybackManager", "PLAYER INSTANCES: 1")
-      return servicePlayer
+  private fun showToast(message: String) {
+    Handler(Looper.getMainLooper()).post {
+      Toast.makeText(context.applicationContext, message, Toast.LENGTH_SHORT).show()
     }
-    MusicPlaybackService.startOrUpdate(context, _currentSong.value, true)
-    var attempts = 0
-    while (MusicPlaybackService.getInstance()?.player == null && attempts < 15) {
-      try {
-        Thread.sleep(50)
-      } catch (_: Exception) {}
-      attempts++
-    }
-    val startedPlayer = MusicPlaybackService.getInstance()?.player
-    if (startedPlayer != null) {
-      android.util.Log.d("PlaybackManager", "PLAYER INSTANCES: 1")
-      return startedPlayer
-    }
-    throw IllegalStateException("MusicPlaybackService player not initialized")
   }
 
-  private fun ensurePlayerListener() {
-    try {
-      val player = getOrCreatePlayer()
-      applyRepeatModeToPlayer(player, _repeatMode.value)
+  private fun filterPlayableSongs(songs: List<Song>): List<Song> {
+    val minSec = prefs.getInt("min_audio_duration_sec", 30)
+    val minMs = if (minSec > 0) minSec * 1000L else 0L
+    return songs.filter { song ->
+      song.playbackError == 0 && (minMs <= 0L || song.durationMs >= minMs)
+    }
+  }
 
-      if (!playerListenerAttached) {
-        player.addListener(object : Player.Listener {
-          override fun onIsPlayingChanged(isPlaying: Boolean) {
-            _isPlaying.value = isPlaying
+  private fun getActivePlayer(): ExoPlayer? {
+    val player = MusicPlaybackService.getInstance()?.player ?: MusicPlaybackService.playerFlow.value
+    if (player != null) {
+      attachPlayerListener(player)
+    } else {
+      MusicPlaybackService.startOrUpdate(context, _currentSong.value, isPlaying = false)
+    }
+    return player ?: MusicPlaybackService.getInstance()?.player
+  }
+
+  private fun attachPlayerListener(player: ExoPlayer) {
+    applyRepeatModeToPlayer(player, _repeatMode.value)
+
+    if (!playerListenerAttached) {
+      player.addListener(object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+          _isPlaying.value = isPlaying
+          if (!isPlaying) {
+            playedCurrentSongTimeMs = 0L
           }
+        }
 
-          override fun onPlaybackStateChanged(playbackState: Int) {
-            if (playbackState == Player.STATE_ENDED) {
-              handleTrackCompletion()
-            }
+        override fun onPlaybackStateChanged(playbackState: Int) {
+          if (playbackState == Player.STATE_ENDED) {
+            handleTrackCompletion()
           }
+        }
 
-          override fun onRepeatModeChanged(repeatMode: Int) {
-            val mode = when (repeatMode) {
-              Player.REPEAT_MODE_ALL -> RepeatMode.ALL
-              Player.REPEAT_MODE_ONE -> RepeatMode.ONE
-              else -> RepeatMode.OFF
-            }
-            if (_repeatMode.value != mode) {
-              _repeatMode.value = mode
-              prefs.edit().putString("repeat_mode", mode.name).apply()
-            }
+        override fun onRepeatModeChanged(repeatMode: Int) {
+          val mode = when (repeatMode) {
+            Player.REPEAT_MODE_ALL -> RepeatMode.ALL
+            Player.REPEAT_MODE_ONE -> RepeatMode.ONE
+            else -> RepeatMode.OFF
           }
+          if (_repeatMode.value != mode) {
+            _repeatMode.value = mode
+            prefs.edit().putString("repeat_mode", mode.name).apply()
+          }
+        }
 
-          override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            try {
-              val currentIdx = getOrCreatePlayer().currentMediaItemIndex
-              if (currentIdx in _queue.value.indices) {
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+          if (isRebuildingQueue) return
+          try {
+            val mediaId = mediaItem?.mediaId ?: getActivePlayer()?.currentMediaItem?.mediaId ?: return
+            val list = _queue.value
+            val matchIdx = list.indexOfFirst { it.id == mediaId }
+            if (matchIdx >= 0) {
+              _queueIndex.value = matchIdx
+              _currentSong.value = list[matchIdx]
+            } else {
+              val currentIdx = getActivePlayer()?.currentMediaItemIndex ?: 0
+              if (currentIdx in list.indices) {
                 _queueIndex.value = currentIdx
-                _currentSong.value = _queue.value[currentIdx]
+                _currentSong.value = list[currentIdx]
               }
-            } catch (_: Exception) {}
+            }
+            consecutiveErrors = 0
+            playedCurrentSongTimeMs = 0L
+          } catch (e: Exception) {
+            CrashLogger.e(TAG, "Error in onMediaItemTransition", e)
           }
-        })
-        playerListenerAttached = true
-      }
-    } catch (_: Exception) {}
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+          CrashLogger.e(TAG, "ExoPlayer error occurred: ${error.message}", error)
+          consecutiveErrors++
+          val failedSong = _currentSong.value
+
+          scope.launch(Dispatchers.IO) {
+            if (failedSong != null) {
+              songDao.updatePlaybackError(failedSong.id, 1, System.currentTimeMillis())
+            }
+          }
+
+          val songTitle = failedSong?.title ?: "track"
+          showToast("Skipped $songTitle: can't be played")
+
+          if (consecutiveErrors >= 5) {
+            showToast("Several files can't be played")
+            consecutiveErrors = 0
+            try {
+              player.stop()
+            } catch (e: Exception) {
+              CrashLogger.e(TAG, "Error stopping player after max consecutive errors", e)
+            }
+            _isPlaying.value = false
+          } else {
+            try {
+              if (player.hasNextMediaItem()) {
+                player.seekToNextMediaItem()
+                player.prepare()
+                player.play()
+              } else {
+                player.stop()
+                _isPlaying.value = false
+              }
+            } catch (e: Exception) {
+              CrashLogger.e(TAG, "Error skipping bad track in onPlayerError", e)
+              _isPlaying.value = false
+            }
+          }
+        }
+      })
+      playerListenerAttached = true
+    }
   }
 
   private fun applyRepeatModeToPlayer(player: ExoPlayer, mode: RepeatMode) {
@@ -172,7 +249,8 @@ class PlaybackManager(
   }
 
   fun playSong(song: Song, contextQueue: List<Song> = emptyList()) {
-    val fullQueue = if (contextQueue.isNotEmpty()) contextQueue else listOf(song)
+    val rawList = if (contextQueue.isNotEmpty()) contextQueue else listOf(song)
+    val fullQueue = filterPlayableSongs(rawList).ifEmpty { listOf(song) }
     originalQueue = fullQueue
 
     if (_shuffleEnabled.value) {
@@ -188,29 +266,31 @@ class PlaybackManager(
   }
 
   fun setQueue(songs: List<Song>, startIndex: Int = 0) {
-    if (songs.isEmpty()) return
-    originalQueue = songs
+    val playable = filterPlayableSongs(songs)
+    if (playable.isEmpty()) return
+    originalQueue = playable
 
     if (_shuffleEnabled.value) {
-      val selectedSong = songs.getOrNull(startIndex) ?: songs.first()
-      val shuffledQueue = SmartShuffle.order(songs, selectedSong)
+      val selectedSong = playable.getOrNull(startIndex) ?: playable.first()
+      val shuffledQueue = SmartShuffle.order(playable, selectedSong)
       _queue.value = shuffledQueue
       _queueIndex.value = 0
     } else {
-      _queue.value = songs
-      _queueIndex.value = startIndex.coerceIn(0, songs.size - 1)
+      _queue.value = playable
+      _queueIndex.value = startIndex.coerceIn(0, playable.size - 1)
     }
     playCurrentQueueItem()
   }
 
   fun playShuffle(songs: List<Song>) {
-    if (songs.isEmpty()) return
-    originalQueue = songs
+    val playable = filterPlayableSongs(songs)
+    if (playable.isEmpty()) return
+    originalQueue = playable
     _shuffleEnabled.value = true
     prefs.edit().putBoolean("shuffle_enabled", true).apply()
 
-    val startingSong = songs.random()
-    val shuffledQueue = SmartShuffle.order(songs, startingSong)
+    val startingSong = playable.random()
+    val shuffledQueue = SmartShuffle.order(playable, startingSong)
     _queue.value = shuffledQueue
     _queueIndex.value = 0
     playCurrentQueueItem()
@@ -246,30 +326,37 @@ class PlaybackManager(
     _currentSong.value = song
 
     try {
-      ensurePlayerListener()
-      val player = getOrCreatePlayer()
-      applyRepeatModeToPlayer(player, _repeatMode.value)
+      val player = getActivePlayer()
+      if (player != null) {
+        applyRepeatModeToPlayer(player, _repeatMode.value)
 
-      player.stop()
-      player.clearMediaItems()
+        isRebuildingQueue = true
+        player.stop()
+        player.clearMediaItems()
 
-      val mediaItems = list.map { createMediaItem(it) }
+        val mediaItems = list.map { createMediaItem(it) }
 
-      player.setMediaItems(mediaItems, idx, 0L)
-      player.prepare()
-      player.play()
+        player.setMediaItems(mediaItems, idx, 0L)
+        player.prepare()
+        player.play()
+        isRebuildingQueue = false
 
-      setupEqualizer()
+        setupEqualizer()
 
-      _durationMs.value = player.duration.let { if (it > 0) it else song.durationMs }
-      _currentPositionMs.value = 0L
+        _durationMs.value = player.duration.let { if (it > 0) it else song.durationMs }
+        _currentPositionMs.value = 0L
 
-      scope.launch(Dispatchers.IO) {
-        songDao.incrementPlayCount(song.id, System.currentTimeMillis())
+        scope.launch(Dispatchers.IO) {
+          songDao.incrementPlayCount(song.id, System.currentTimeMillis())
+        }
+
+        MusicPlaybackService.startOrUpdate(context, song, isPlaying = true)
+      } else {
+        isRebuildingQueue = false
       }
-
-      MusicPlaybackService.startOrUpdate(context, song, isPlaying = true)
     } catch (e: Exception) {
+      isRebuildingQueue = false
+      CrashLogger.e(TAG, "Error playing queue item", e)
       _isPlaying.value = false
     }
   }
@@ -278,7 +365,7 @@ class PlaybackManager(
     if (_currentSong.value?.id == song.id) {
       _currentSong.value = song
       try {
-        val player = getOrCreatePlayer()
+        val player = getActivePlayer() ?: return
         val displayArtist = if (song.artist.isBlank() || song.artist.equals("Unknown Artist", ignoreCase = true) || song.artist.equals("<unknown>", ignoreCase = true)) {
           "SpotiOffline"
         } else {
@@ -296,7 +383,9 @@ class PlaybackManager(
             player.currentMediaItem!!.buildUpon().setMediaMetadata(mediaMetadata).build()
           )
         }
-      } catch (_: Exception) {}
+      } catch (e: Exception) {
+        CrashLogger.e(TAG, "Error updating current song metadata on player", e)
+      }
     }
   }
 
@@ -313,16 +402,18 @@ class PlaybackManager(
       _isPlaying.value = false
       _currentPositionMs.value = 0L
       _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = false) }
+    } else if (_repeatMode.value == RepeatMode.ALL && _shuffleEnabled.value) {
+      // Re-shuffle for a fresh lap
+      val current = _currentSong.value
+      val freshShuffled = SmartShuffle.order(originalQueue, current)
+      updatePlayerQueueForShuffle(freshShuffled, current)
     }
   }
 
   fun togglePlayPause() {
     try {
-      ensurePlayerListener()
-      val player = getOrCreatePlayer()
-      if (_currentSong.value == null) {
-        return
-      }
+      val player = getActivePlayer() ?: return
+      if (_currentSong.value == null) return
 
       if (player.isPlaying) {
         player.pause()
@@ -337,14 +428,15 @@ class PlaybackManager(
           _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = true) }
         }
       }
-    } catch (_: Exception) {}
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Error in togglePlayPause", e)
+    }
   }
 
   fun next() {
     try {
-      ensurePlayerListener()
-      val player = getOrCreatePlayer()
-      if (player.hasNextMediaItem()) {
+      val player = getActivePlayer()
+      if (player != null && player.hasNextMediaItem()) {
         player.seekToNextMediaItem()
         player.play()
       } else {
@@ -354,7 +446,8 @@ class PlaybackManager(
         _queueIndex.value = nextIdx
         playCurrentQueueItem()
       }
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Error in next()", e)
       val list = _queue.value
       if (list.isNotEmpty()) {
         _queueIndex.value = (_queueIndex.value + 1) % list.size
@@ -365,31 +458,36 @@ class PlaybackManager(
 
   fun previous() {
     try {
-      ensurePlayerListener()
-      val player = getOrCreatePlayer()
-      if (player.currentPosition > 3000) {
-        player.seekTo(0)
-        _currentPositionMs.value = 0L
-        return
+      val player = getActivePlayer()
+      if (player != null) {
+        if (player.currentPosition > 3000) {
+          player.seekTo(0)
+          _currentPositionMs.value = 0L
+          return
+        }
+        if (player.hasPreviousMediaItem()) {
+          player.seekToPreviousMediaItem()
+          player.play()
+          return
+        }
       }
-      if (player.hasPreviousMediaItem()) {
-        player.seekToPreviousMediaItem()
-        player.play()
-      } else {
-        val list = _queue.value
-        if (list.isEmpty()) return
-        val prevIdx = if (_queueIndex.value - 1 < 0) list.size - 1 else _queueIndex.value - 1
-        _queueIndex.value = prevIdx
-        playCurrentQueueItem()
-      }
-    } catch (_: Exception) {}
+      val list = _queue.value
+      if (list.isEmpty()) return
+      val prevIdx = if (_queueIndex.value - 1 < 0) list.size - 1 else _queueIndex.value - 1
+      _queueIndex.value = prevIdx
+      playCurrentQueueItem()
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Error in previous()", e)
+    }
   }
 
   fun seekTo(positionMs: Long) {
     try {
-      getOrCreatePlayer().seekTo(positionMs)
+      getActivePlayer()?.seekTo(positionMs)
       _currentPositionMs.value = positionMs
-    } catch (_: Exception) {}
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Error in seekTo", e)
+    }
   }
 
   fun toggleShuffle() {
@@ -421,18 +519,27 @@ class PlaybackManager(
     _repeatMode.value = nextMode
     prefs.edit().putString("repeat_mode", nextMode.name).apply()
     try {
-      applyRepeatModeToPlayer(getOrCreatePlayer(), nextMode)
+      getActivePlayer()?.let { applyRepeatModeToPlayer(it, nextMode) }
     } catch (e: Exception) {
-      android.util.Log.e("PlaybackManager", "Error toggling repeat mode", e)
+      CrashLogger.e(TAG, "Error toggling repeat mode", e)
     }
   }
 
   private fun updatePlayerQueueForShuffle(newQueue: List<Song>, currentSong: Song?) {
     try {
-      val player = getOrCreatePlayer()
-      if (newQueue.isEmpty()) return
+      isRebuildingQueue = true
+      val player = getActivePlayer()
+      if (newQueue.isEmpty() || player == null) {
+        isRebuildingQueue = false
+        return
+      }
+
       val targetIndexInNewQueue = newQueue.indexOfFirst { it.id == currentSong?.id }.let { if (it >= 0) it else 0 }
       val mediaItems = newQueue.map { createMediaItem(it) }
+
+      _queue.value = newQueue
+      _queueIndex.value = targetIndexInNewQueue
+      _currentSong.value = newQueue.getOrNull(targetIndexInNewQueue)
 
       val currentIdx = player.currentMediaItemIndex
       if (player.mediaItemCount > 0 && currentIdx in 0 until player.mediaItemCount) {
@@ -442,7 +549,6 @@ class PlaybackManager(
         if (currentIdx > 0) {
           player.removeMediaItems(0, currentIdx)
         }
-        // Current item is now at index 0
         if (targetIndexInNewQueue > 0) {
           player.addMediaItems(0, mediaItems.subList(0, targetIndexInNewQueue))
         }
@@ -453,14 +559,17 @@ class PlaybackManager(
         player.setMediaItems(mediaItems, targetIndexInNewQueue, 0L)
       }
 
-      _queue.value = newQueue
-      _queueIndex.value = targetIndexInNewQueue
+      isRebuildingQueue = false
     } catch (e: Exception) {
-      android.util.Log.e("PlaybackManager", "Error updating player queue for shuffle", e)
+      isRebuildingQueue = false
+      CrashLogger.e(TAG, "Error updating player queue for shuffle", e)
     }
   }
 
   fun addToQueue(song: Song) {
+    if (song.playbackError == 1) return
+    isRebuildingQueue = true
+
     val updated = _queue.value.toMutableList()
     updated.add(song)
     _queue.value = updated
@@ -470,13 +579,18 @@ class PlaybackManager(
     originalQueue = origUpdated
 
     try {
-      getOrCreatePlayer().addMediaItem(createMediaItem(song))
+      getActivePlayer()?.addMediaItem(createMediaItem(song))
     } catch (e: Exception) {
-      android.util.Log.e("PlaybackManager", "Error adding item to queue", e)
+      CrashLogger.e(TAG, "Error adding item to queue", e)
+    } finally {
+      isRebuildingQueue = false
     }
   }
 
   fun playNext(song: Song) {
+    if (song.playbackError == 1) return
+    isRebuildingQueue = true
+
     val currentList = _queue.value.toMutableList()
     val currentIdx = _queueIndex.value
     val insertAt = (currentIdx + 1).coerceAtMost(currentList.size)
@@ -490,16 +604,19 @@ class PlaybackManager(
     originalQueue = origList
 
     try {
-      val player = getOrCreatePlayer()
-      player.addMediaItem(currentIdx + 1, createMediaItem(song))
+      val player = getActivePlayer()
+      player?.addMediaItem(currentIdx + 1, createMediaItem(song))
     } catch (e: Exception) {
-      android.util.Log.e("PlaybackManager", "Error adding playNext item", e)
+      CrashLogger.e(TAG, "Error adding playNext item", e)
+    } finally {
+      isRebuildingQueue = false
     }
   }
 
   fun removeFromQueue(index: Int) {
     val list = _queue.value.toMutableList()
     if (index in list.indices && list.size > 1) {
+      isRebuildingQueue = true
       val removedSong = list.removeAt(index)
       _queue.value = list
 
@@ -512,9 +629,11 @@ class PlaybackManager(
       }
 
       try {
-        getOrCreatePlayer().removeMediaItem(index)
+        getActivePlayer()?.removeMediaItem(index)
       } catch (e: Exception) {
-        android.util.Log.e("PlaybackManager", "Error removing item from queue", e)
+        CrashLogger.e(TAG, "Error removing item from queue", e)
+      } finally {
+        isRebuildingQueue = false
       }
     }
   }
@@ -534,8 +653,10 @@ class PlaybackManager(
       override fun onFinish() {
         _sleepTimerRemainingMinutes.value = 0
         try {
-          getOrCreatePlayer().pause()
-        } catch (_: Exception) {}
+          getActivePlayer()?.pause()
+        } catch (e: Exception) {
+          CrashLogger.e(TAG, "Error pausing player on sleep timer finish", e)
+        }
         _isPlaying.value = false
         _currentSong.value?.let { MusicPlaybackService.startOrUpdate(context, it, isPlaying = false) }
       }
@@ -549,7 +670,8 @@ class PlaybackManager(
 
   private fun setupEqualizer() {
     try {
-      val sessionId = getOrCreatePlayer().audioSessionId
+      val sessionId = getActivePlayer()?.audioSessionId ?: return
+      if (sessionId <= 0) return
       if (equalizer == null || equalizer?.hasControl() == false) {
         equalizer = Equalizer(0, sessionId).apply {
           enabled = true
@@ -577,7 +699,9 @@ class PlaybackManager(
         )
       }
       _equalizerBands.value = bandList
-    } catch (_: Exception) {}
+    } catch (e: Exception) {
+      CrashLogger.w(TAG, "Failed setting up equalizer", e)
+    }
   }
 
   fun setEqualizerBandLevel(bandIndex: Short, levelMilliBels: Short) {
@@ -590,7 +714,9 @@ class PlaybackManager(
         _equalizerBands.value = current
       }
       _currentPreset.value = "Custom"
-    } catch (_: Exception) {}
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Error setting equalizer band level", e)
+    }
   }
 
   fun setEqualizerPreset(presetName: String) {
@@ -619,21 +745,29 @@ class PlaybackManager(
         bands[i] = bands[i].copy(currentLevelMilliBels = targetLevel)
       }
       _equalizerBands.value = bands
-    } catch (_: Exception) {}
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Error setting equalizer preset $presetName", e)
+    }
   }
 
   private fun startPositionTicker() {
     positionUpdateJob?.cancel()
     positionUpdateJob = scope.launch(Dispatchers.Main) {
       while (isActive) {
-        val player = MusicPlaybackService.getInstance()?.player
+        val player = MusicPlaybackService.getInstance()?.player ?: MusicPlaybackService.playerFlow.value
         if (player != null && _isPlaying.value) {
           try {
             _currentPositionMs.value = player.currentPosition
             if (player.duration > 0) {
               _durationMs.value = player.duration
             }
-          } catch (_: Exception) {}
+            playedCurrentSongTimeMs += 200L
+            if (playedCurrentSongTimeMs >= 3000L) {
+              consecutiveErrors = 0
+            }
+          } catch (e: Exception) {
+            CrashLogger.w(TAG, "Error updating playback position ticker", e)
+          }
         }
         delay(200)
       }
@@ -645,6 +779,9 @@ class PlaybackManager(
     sleepTimer?.cancel()
     try {
       equalizer?.release()
-    } catch (_: Exception) {}
+    } catch (e: Exception) {
+      CrashLogger.e(TAG, "Error releasing equalizer", e)
+    }
   }
 }
+

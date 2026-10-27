@@ -91,4 +91,16 @@ class SmartShuffleTest {
     assertEquals(s3.id, shuffled[1].id)
     assertEquals(s2.id, shuffled[2].id)
   }
+
+  @Test
+  fun testUnplayableSongsExcluded() {
+    val s1 = createSong("1", "Playable 1", "Artist A")
+    val s2 = createSong("2", "Unplayable", "Artist B").copy(playbackError = 1)
+    val s3 = createSong("3", "Playable 2", "Artist C")
+    val list = listOf(s1, s2, s3)
+
+    val shuffled = SmartShuffle.order(list, s1)
+    assertEquals(2, shuffled.size)
+    assertFalse(shuffled.any { it.id == "2" })
+  }
 }

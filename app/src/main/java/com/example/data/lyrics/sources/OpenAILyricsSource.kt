@@ -400,7 +400,8 @@ class OpenAILyricsSource(private val context: Context) : LyricsSource {
       else -> {
         try {
           JSONObject(bodyStr).optJSONObject("error")?.optString("message") ?: bodyStr.take(120)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+          CrashLogger.e("OpenAILyricsSource", "Error parsing error response JSON", e)
           bodyStr.take(120)
         }
       }

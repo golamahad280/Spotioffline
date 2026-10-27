@@ -122,6 +122,16 @@ class DatabaseMigrationTest {
     assertEquals(null, cursor3.getString(2))
     cursor3.close()
 
+    // 5. Apply MIGRATION_4_5
+    AppDatabase.MIGRATION_4_5.migrate(db)
+
+    // Verify columns from migration 4 -> 5
+    val cursor4 = db.query("SELECT playbackError, lastErrorAt FROM songs WHERE id = 'test_1'")
+    assertTrue(cursor4.moveToFirst())
+    assertEquals(0, cursor4.getInt(0))
+    assertEquals(0L, cursor4.getLong(1))
+    cursor4.close()
+
     db.close()
   }
 }

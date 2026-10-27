@@ -186,7 +186,9 @@ object DemoAudioGenerator {
         bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
         out.flush()
       }
-    } catch (_: Exception) {}
+    } catch (e: Exception) {
+      CrashLogger.e("DemoAudioGenerator", "Failed generating art file", e)
+    }
   }
 
   private fun generateWavFile(file: File, durationSec: Int, baseFreq: Double) {

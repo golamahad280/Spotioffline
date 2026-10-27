@@ -119,6 +119,7 @@ fun LibraryScreen(
   onRemoveCustomCover: (Song) -> Unit = {},
   onSearchCoverAgain: (Song) -> Unit = {},
   onSearchCoverCustomName: (Song, String) -> Unit = { _, _ -> },
+  onRetrySong: (Song) -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   var activeFilter by remember { mutableStateOf(LibraryFilter.ALL) }
@@ -567,6 +568,16 @@ fun LibraryScreen(
                     onDismissRequest = { showMenu = false },
                     modifier = Modifier.background(SpotifyCardElevated)
                   ) {
+                    if (song.playbackError == 1) {
+                      DropdownMenuItem(
+                        text = { Text("Retry (Clear playback error)", color = SpotifyGreen) },
+                        leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null, tint = SpotifyGreen) },
+                        onClick = {
+                          showMenu = false
+                          onRetrySong(song)
+                        }
+                      )
+                    }
                     DropdownMenuItem(
                       text = { Text("Rename", color = SpotifyWhite) },
                       leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = SpotifyWhite) },
@@ -882,6 +893,17 @@ fun LibrarySongRow(
       )
       Spacer(modifier = Modifier.height(2.dp))
       Row(verticalAlignment = Alignment.CenterVertically) {
+        if (song.playbackError == 1) {
+          Box(
+            modifier = Modifier
+              .clip(RoundedCornerShape(3.dp))
+              .background(Color(0xFFFF5252).copy(alpha = 0.2f))
+              .padding(horizontal = 4.dp, vertical = 1.dp)
+          ) {
+            Text("UNPLAYABLE", color = Color(0xFFFF5252), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+          }
+          Spacer(modifier = Modifier.width(6.dp))
+        }
         if (song.hasLyrics) {
           Box(
             modifier = Modifier

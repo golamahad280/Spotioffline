@@ -87,5 +87,5 @@ class LyricsOvhLyricsSource : LyricsSource {
   }
 
   private fun enc(s: String): String =
-    try { URLEncoder.encode(s, "UTF-8") } catch (_: Exception) { s }
+    try { URLEncoder.encode(s, "UTF-8") } catch (e: Exception) { com.example.utils.CrashLogger.e("LyricsOvhLyricsSource", "URLEncoder error", e); s }
 }

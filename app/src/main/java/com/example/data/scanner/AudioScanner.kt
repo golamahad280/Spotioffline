@@ -216,7 +216,7 @@ class AudioScanner(
     totalAddedOrUpdated
   }
 
-  private fun extractEmbeddedArt(contentUri: String, filePath: String?, mediaId: Long): String? {
+  private suspend fun extractEmbeddedArt(contentUri: String, filePath: String?, mediaId: Long): String? {
     var embeddedArtUri: String? = null
     var retriever: MediaMetadataRetriever? = null
     try {
@@ -228,18 +228,18 @@ class AudioScanner(
       }
       val embeddedPic = retriever.embeddedPicture
       if (embeddedPic != null && embeddedPic.isNotEmpty()) {
-        embeddedArtUri = kotlinx.coroutines.runBlocking {
-          ImageUtils.saveArtworkBytes(context, embeddedPic, "media_$mediaId")
-        }
+        embeddedArtUri = ImageUtils.saveArtworkBytes(context, embeddedPic, "media_$mediaId")
       }
     } catch (oom: OutOfMemoryError) {
       CrashLogger.e(TAG, "OOM extracting embedded picture for $contentUri", oom)
     } catch (e: Exception) {
-      // Ignore audio file without embedded artwork
+      CrashLogger.w(TAG, "Audio file without embedded artwork or error reading: $contentUri", e)
     } finally {
       try {
         retriever?.release()
-      } catch (_: Exception) {}
+      } catch (e: Exception) {
+        CrashLogger.w(TAG, "Error releasing MediaMetadataRetriever", e)
+      }
     }
     return embeddedArtUri
   }
@@ -261,7 +261,9 @@ class AudioScanner(
         if (song.filePath != null) {
           try {
             fileExists = File(song.filePath).exists()
-          } catch (_: Exception) {}
+          } catch (e: Exception) {
+            CrashLogger.w(TAG, "Error checking file existence for ${song.filePath}", e)
+          }
         }
 
         if (!fileExists) {
@@ -272,7 +274,8 @@ class AudioScanner(
               fileExists = true
               pfd.close()
             }
-          } catch (_: Exception) {
+          } catch (e: Exception) {
+            CrashLogger.w(TAG, "ContentResolver could not open URI ${song.uriString}", e)
             fileExists = false
           }
         }
@@ -349,7 +352,9 @@ class AudioScanner(
           }
         }
       }
-    } catch (_: Exception) {}
+    } catch (e: Exception) {
+      CrashLogger.w(TAG, "Error collecting files from ${dir.absolutePath}", e)
+    }
   }
 
   suspend fun importAudioUri(uri: Uri): Song? = withContext(Dispatchers.IO) {

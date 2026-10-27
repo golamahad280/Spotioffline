@@ -222,5 +222,5 @@ class NetEaseLyricsSource : LyricsSource {
     s.lowercase().replace(Regex("[^a-z0-9]"), "").trim()
 
   private fun enc(s: String): String =
-    try { URLEncoder.encode(s, "UTF-8") } catch (_: Exception) { s }
+    try { URLEncoder.encode(s, "UTF-8") } catch (e: Exception) { com.example.utils.CrashLogger.e("NetEaseLyricsSource", "URLEncoder error", e); s }
 }

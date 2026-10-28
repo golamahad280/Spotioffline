@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -96,14 +97,20 @@ fun TapToSyncTool(
         Column {
           Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
           ) {
-            IconButton(onClick = onDismiss) {
+            IconButton(
+              onClick = onDismiss,
+              modifier = Modifier.size(48.dp)
+            ) {
               Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = SpotifyWhite)
             }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-              Text("Tap to Sync", color = SpotifyWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.width(4.dp))
+            Column(
+              modifier = Modifier.weight(1f),
+              horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+              Text("Tap to Sync", color = SpotifyWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
               Text(
                 text = "${song.title} • ${formatMs(currentPositionMs)}",
                 color = SpotifyTextSecondary,
@@ -112,6 +119,7 @@ fun TapToSyncTool(
                 overflow = TextOverflow.Ellipsis
               )
             }
+            Spacer(modifier = Modifier.width(8.dp))
             Button(
               onClick = {
                 if (stampedLines.isNotEmpty()) {
@@ -120,9 +128,10 @@ fun TapToSyncTool(
                 }
               },
               colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
-              enabled = stampedLines.isNotEmpty()
+              enabled = stampedLines.isNotEmpty(),
+              contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
             ) {
-              Text("Finish", color = SpotifyBlack, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+              Text("Finish", color = SpotifyBlack, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, softWrap = false)
             }
           }
 

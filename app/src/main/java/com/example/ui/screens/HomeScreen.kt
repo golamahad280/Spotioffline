@@ -110,11 +110,17 @@ fun HomeScreen(
           text = greeting,
           color = SpotifyWhite,
           fontSize = 24.sp,
-          fontWeight = FontWeight.Bold
+          fontWeight = FontWeight.Bold,
+          modifier = Modifier.weight(1f),
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
         )
+        Spacer(modifier = Modifier.width(8.dp))
         IconButton(
           onClick = onOpenSettings,
-          modifier = Modifier.testTag("home_settings_btn")
+          modifier = Modifier
+            .size(48.dp)
+            .testTag("home_settings_btn")
         ) {
           Icon(
             imageVector = Icons.Default.Settings,
@@ -139,18 +145,25 @@ fun HomeScreen(
           Column {
             Row(
               modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.SpaceBetween
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
             ) {
               Text(
                 text = "Scanning Device for Audio...",
                 color = SpotifyWhite,
                 fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
               )
+              Spacer(modifier = Modifier.width(8.dp))
               Text(
                 text = "${scanProgress.scannedFiles}/${scanProgress.totalFiles}",
                 color = SpotifyGreen,
-                fontSize = 12.sp
+                fontSize = 12.sp,
+                maxLines = 1,
+                softWrap = false
               )
             }
             Spacer(modifier = Modifier.height(4.dp))
@@ -602,12 +615,14 @@ fun SongRowItem(
           color = SpotifyTextSecondary,
           fontSize = 13.sp,
           maxLines = 1,
-          overflow = TextOverflow.Ellipsis
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f, fill = false)
         )
       }
     }
 
     if (trailingContent != null) {
+      Spacer(modifier = Modifier.width(8.dp))
       trailingContent()
     }
   }

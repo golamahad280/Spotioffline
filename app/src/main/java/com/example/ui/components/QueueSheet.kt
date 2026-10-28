@@ -79,9 +79,16 @@ fun QueueSheet(
           text = "Play Queue",
           color = SpotifyWhite,
           fontSize = 20.sp,
-          fontWeight = FontWeight.Bold
+          fontWeight = FontWeight.Bold,
+          modifier = Modifier.weight(1f),
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
         )
-        IconButton(onClick = onDismiss) {
+        Spacer(modifier = Modifier.width(8.dp))
+        IconButton(
+          onClick = onDismiss,
+          modifier = Modifier.size(48.dp)
+        ) {
           Icon(
             imageVector = Icons.Default.Close,
             contentDescription = "Close",
@@ -188,8 +195,11 @@ fun QueueSheet(
               color = if (isCurrent) SpotifyGreen else SpotifyTextSecondary,
               fontSize = 12.sp,
               fontWeight = FontWeight.SemiBold,
-              modifier = Modifier.width(24.dp)
+              modifier = Modifier.width(28.dp),
+              maxLines = 1,
+              softWrap = false
             )
+            Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
               Text(
                 text = song.title,
@@ -209,7 +219,11 @@ fun QueueSheet(
             }
 
             if (!isCurrent) {
-              IconButton(onClick = { onRemoveTrack(index) }) {
+              Spacer(modifier = Modifier.width(8.dp))
+              IconButton(
+                onClick = { onRemoveTrack(index) },
+                modifier = Modifier.size(40.dp)
+              ) {
                 Icon(
                   imageVector = Icons.Default.Delete,
                   contentDescription = "Remove from Queue",

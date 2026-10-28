@@ -35,7 +35,12 @@ class LyricsPipelineTest {
         override suspend fun incrementPlayCount(songId: String, timestamp: Long) {}
         override suspend fun updateSyncOffset(songId: String, offset: Long) {}
         override fun getSongByIdFlow(songId: String) = kotlinx.coroutines.flow.flowOf(null)
-        override suspend fun updateLyricsSuccess(songId: String, lyrics: String, isSynced: Boolean, source: String, fetchedAt: Long) {}
+        override suspend fun updateLyricsSuccess(songId: String, lyrics: String, isSynced: Boolean, source: String, fetchedAt: Long, script: String?) {}
+        override suspend fun saveManualLyrics(songId: String, lyrics: String, isSynced: Boolean, previousLyrics: String?, script: String?, fetchedAt: Long) {}
+        override suspend fun restoreOriginalLyrics(songId: String, isSynced: Boolean, script: String?) {}
+        override suspend fun deleteLyrics(songId: String) {}
+        override suspend fun saveEnglishLyrics(songId: String, enText: String?, mode: String?) {}
+        override suspend fun forceUpdateLyrics(songId: String, lyrics: String, isSynced: Boolean, source: String, fetchedAt: Long, previousLyrics: String?, script: String?) {}
         override suspend fun updateLyricsNotFound(songId: String, fetchedAt: Long, error: String) {}
         override suspend fun updateLyricsStatus(songId: String, status: String, fetchedAt: Long, error: String) {}
         override suspend fun setLyricsFetching(songId: String) {}

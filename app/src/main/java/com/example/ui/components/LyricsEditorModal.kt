@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -79,16 +80,23 @@ fun LyricsEditorModal(
         Column {
           Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
           ) {
-            IconButton(onClick = onDismiss) {
+            IconButton(
+              onClick = onDismiss,
+              modifier = Modifier.size(48.dp)
+            ) {
               Icon(Icons.Default.Close, contentDescription = "Close", tint = SpotifyWhite)
             }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-              Text("Lyrics Editor", color = SpotifyWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-              Text(song.title, color = SpotifyTextSecondary, fontSize = 12.sp)
+            Spacer(modifier = Modifier.width(4.dp))
+            Column(
+              modifier = Modifier.weight(1f),
+              horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+              Text("Lyrics Editor", color = SpotifyWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+              Text(song.title, color = SpotifyTextSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            Spacer(modifier = Modifier.width(8.dp))
             Button(
               onClick = {
                 val contentToSave = when (selectedTab) {
@@ -104,9 +112,10 @@ fun LyricsEditorModal(
                 }
                 onDismiss()
               },
-              colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen)
+              colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+              contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
             ) {
-              Text("Save", color = SpotifyBlack, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+              Text("Save", color = SpotifyBlack, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, softWrap = false)
             }
           }
 

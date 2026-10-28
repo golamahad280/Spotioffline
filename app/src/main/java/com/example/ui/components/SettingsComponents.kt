@@ -9,7 +9,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,15 +29,18 @@ fun SettingsSection(title: String) {
 }
 
 @Composable
-fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+fun SettingsCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(SpotifyCardElevated)
-            .padding(16.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
     }
 }
 
@@ -58,12 +60,31 @@ fun SettingsRow(
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(imageVector = icon, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(24.dp))
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = SpotifyGreen,
+            modifier = Modifier.size(24.dp)
+        )
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
+            Text(
+                text = title,
+                color = SpotifyWhite,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
             if (subtitle != null) {
-                Text(subtitle, color = SpotifyTextSecondary, fontSize = 11.sp, maxLines = 3)
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    color = SpotifyTextSecondary,
+                    fontSize = 11.sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
         if (trailing != null) {

@@ -122,14 +122,17 @@ fun SearchOtherVersionsDialog(
       ) {
         Row(
           modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
         ) {
-          Column {
-            Text("Search Other Versions", color = SpotifyWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Search Other Versions", color = SpotifyWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text("${song.title} • ${song.artist}", color = SpotifyTextSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
           }
-          IconButton(onClick = onDismiss) {
+          Spacer(modifier = Modifier.width(8.dp))
+          IconButton(
+            onClick = onDismiss,
+            modifier = Modifier.size(48.dp)
+          ) {
             Icon(Icons.Default.Close, contentDescription = "Close", tint = SpotifyWhite)
           }
         }
@@ -171,10 +174,13 @@ fun SearchOtherVersionsDialog(
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                       Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                       ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                          modifier = Modifier.weight(1f),
+                          horizontalArrangement = Arrangement.spacedBy(6.dp),
+                          verticalAlignment = Alignment.CenterVertically
+                        ) {
                           Text(candidate.source, color = SpotifyGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                           if (candidate.isSynced) {
                             Surface(
@@ -200,7 +206,14 @@ fun SearchOtherVersionsDialog(
                             }
                           }
                         }
-                        Text("${candidate.durationSec}s", color = SpotifyTextMuted, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                          "${candidate.durationSec}s",
+                          color = SpotifyTextMuted,
+                          fontSize = 11.sp,
+                          maxLines = 1,
+                          softWrap = false
+                        )
                       }
                       Text(
                         text = "${candidate.title} - ${candidate.artist}",

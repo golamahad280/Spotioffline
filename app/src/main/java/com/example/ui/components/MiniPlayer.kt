@@ -124,6 +124,8 @@ fun MiniPlayer(
           )
         }
 
+        Spacer(modifier = Modifier.width(6.dp))
+
         // Like Button
         IconButton(
           onClick = onLikeClick,
@@ -139,6 +141,8 @@ fun MiniPlayer(
           )
         }
 
+        Spacer(modifier = Modifier.width(4.dp))
+
         // Next Button
         IconButton(
           onClick = onNextClick,
@@ -153,6 +157,8 @@ fun MiniPlayer(
             modifier = Modifier.size(24.dp)
           )
         }
+
+        Spacer(modifier = Modifier.width(4.dp))
 
         // Play/Pause Button
         IconButton(

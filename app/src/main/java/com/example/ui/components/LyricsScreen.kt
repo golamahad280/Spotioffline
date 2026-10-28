@@ -12,11 +12,16 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -261,17 +266,19 @@ fun LyricsScreen(
       Column(
         modifier = Modifier
           .fillMaxSize()
-          .windowInsetsPadding(WindowInsets.statusBars)
+          .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
       ) {
         // Top Navigation Header
         Row(
           modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
-          horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
         ) {
-          IconButton(onClick = onDismiss) {
+          IconButton(
+            onClick = onDismiss,
+            modifier = Modifier.size(48.dp)
+          ) {
             Icon(
               imageVector = Icons.Default.Close,
               contentDescription = "Close Lyrics",
@@ -279,20 +286,32 @@ fun LyricsScreen(
             )
           }
 
-          Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+          Column(
+            modifier = Modifier
+              .weight(1f)
+              .padding(horizontal = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.Center,
+              verticalAlignment = Alignment.CenterVertically
+            ) {
               Text(
                 text = song.title,
                 color = SpotifyWhite,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
               )
               ScriptDetector.getScriptBadge(song.lyricsScript)?.let { badge ->
+                Spacer(modifier = Modifier.width(6.dp))
                 Surface(
                   color = Color(0xFF2E3830),
-                  shape = RoundedCornerShape(4.dp)
+                  shape = RoundedCornerShape(4.dp),
+                  modifier = Modifier.wrapContentWidth()
                 ) {
                   Text(
                     text = badge,
@@ -313,10 +332,15 @@ fun LyricsScreen(
             )
           }
 
-          Row {
+          Row(
+            modifier = Modifier.wrapContentWidth(),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
             IconButton(
               onClick = { showOffsetControls = !showOffsetControls },
-              modifier = Modifier.testTag("lyrics_sync_toggle")
+              modifier = Modifier
+                .size(48.dp)
+                .testTag("lyrics_sync_toggle")
             ) {
               Icon(
                 imageVector = Icons.Default.Sync,
@@ -327,12 +351,86 @@ fun LyricsScreen(
 
             IconButton(
               onClick = { showEditorModal = true },
-              modifier = Modifier.testTag("edit_lyrics_button")
+              modifier = Modifier
+                .size(48.dp)
+                .testTag("edit_lyrics_button")
             ) {
               Icon(
                 imageVector = Icons.Default.Edit,
                 contentDescription = "Edit Lyrics",
                 tint = SpotifyWhite
+              )
+            }
+          }
+        }
+
+        // Labelled Action Bar under header
+        LazyRow(
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .padding(horizontal = 16.dp, vertical = 2.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          item {
+            AssistChip(
+              onClick = { showEditorModal = true },
+              label = { Text("Edit", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) },
+              leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp)) },
+              colors = AssistChipDefaults.assistChipColors(labelColor = SpotifyWhite, leadingIconContentColor = SpotifyGreen),
+              modifier = Modifier.height(36.dp)
+            )
+          }
+          item {
+            AssistChip(
+              onClick = {
+                val plain = song.lyricsText?.let { LrcParser.stripTimestamps(it) } ?: ""
+                tapToSyncPlainLines = plain.lines().filter { it.isNotBlank() }
+                showTapToSync = true
+              },
+              label = { Text("Tap to sync", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) },
+              leadingIcon = { Icon(Icons.Default.TouchApp, contentDescription = null, modifier = Modifier.size(16.dp)) },
+              colors = AssistChipDefaults.assistChipColors(labelColor = SpotifyWhite, leadingIconContentColor = SpotifyGreen),
+              modifier = Modifier.height(36.dp)
+            )
+          }
+          item {
+            AssistChip(
+              onClick = { showOffsetControls = !showOffsetControls },
+              label = { Text("Offset", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) },
+              leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp)) },
+              colors = AssistChipDefaults.assistChipColors(labelColor = SpotifyWhite, leadingIconContentColor = SpotifyGreen),
+              modifier = Modifier.height(36.dp)
+            )
+          }
+          item {
+            AssistChip(
+              onClick = { showSearchVersions = true },
+              label = { Text("Other versions", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) },
+              leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+              colors = AssistChipDefaults.assistChipColors(labelColor = SpotifyWhite, leadingIconContentColor = SpotifyGreen),
+              modifier = Modifier.height(36.dp)
+            )
+          }
+          if (onGenerateEnglish != null) {
+            item {
+              AssistChip(
+                onClick = {
+                  if (viewMode == "ENGLISH") {
+                    viewMode = "ORIGINAL"
+                  } else {
+                    if (song.lyricsEnText.isNullOrBlank()) {
+                      showEnglishModeChoice = true
+                    } else {
+                      viewMode = "ENGLISH"
+                    }
+                  }
+                },
+                label = { Text(if (viewMode == "ENGLISH") "Original" else "English", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) },
+                leadingIcon = { Icon(Icons.Default.Translate, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                colors = AssistChipDefaults.assistChipColors(labelColor = SpotifyWhite, leadingIconContentColor = SpotifyGreen),
+                modifier = Modifier.height(36.dp)
               )
             }
           }

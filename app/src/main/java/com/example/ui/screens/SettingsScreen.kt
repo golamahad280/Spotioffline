@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -216,35 +217,80 @@ fun SettingsScreen(
       }
     }
 
-    // Developer Section
+    // Developer Section (Collapsed by default)
     item {
       var showStressTestDialog by remember { mutableStateOf(false) }
+      var isDeveloperExpanded by remember { mutableStateOf(false) }
 
       SettingsSection("DEVELOPER")
       SettingsCard {
-        SettingsRow(
-          icon = Icons.Default.BugReport,
-          title = "Crash & Stability Log",
-          subtitle = "View stack traces, exit reasons & ring buffer",
-          trailing = "View Logs >",
-          onClick = { showCrashLogsDialog = true }
-        )
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clickable { isDeveloperExpanded = !isDeveloperExpanded }
+            .padding(vertical = 6.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Icon(
+            imageVector = Icons.Default.BugReport,
+            contentDescription = null,
+            tint = SpotifyGreen,
+            modifier = Modifier.size(24.dp)
+          )
+          Spacer(modifier = Modifier.width(12.dp))
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "Developer Options",
+              color = SpotifyWhite,
+              fontSize = 14.sp,
+              fontWeight = FontWeight.SemiBold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
+            )
+            Text(
+              text = if (isDeveloperExpanded) "Tap to collapse" else "Stability logs, notification debug, stress test",
+              color = SpotifyTextSecondary,
+              fontSize = 11.sp,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
+            )
+          }
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = if (isDeveloperExpanded) "Collapse ▲" else "Expand ▼",
+            color = SpotifyGreen,
+            fontSize = 13.sp,
+            maxLines = 1,
+            softWrap = false
+          )
+        }
 
-        HorizontalDivider(color = SpotifyDivider)
+        if (isDeveloperExpanded) {
+          HorizontalDivider(color = SpotifyDivider)
 
-        SettingsRow(
-          icon = Icons.Default.AutoAwesome,
-          title = "Run Real Stress Test",
-          subtitle = ">=3 min run with 100 real actions driving player & real files",
-          trailing = "Run Test >",
-          onClick = { showStressTestDialog = true }
-        )
+          SettingsRow(
+            icon = Icons.Default.BugReport,
+            title = "Crash & Stability Log",
+            subtitle = "View stack traces, exit reasons & ring buffer",
+            trailing = "View Logs >",
+            onClick = { showCrashLogsDialog = true }
+          )
 
-        HorizontalDivider(color = SpotifyDivider)
+          HorizontalDivider(color = SpotifyDivider)
 
-        // Notification Debug integration - keeping it as a card/sub-section or directly here
-        // For now, simple integration
-        NotificationDebugCard(modifier = Modifier.padding(top = 8.dp))
+          SettingsRow(
+            icon = Icons.Default.AutoAwesome,
+            title = "Run Real Stress Test",
+            subtitle = ">=3 min run with 100 real actions driving player & real files",
+            trailing = "Run Test >",
+            onClick = { showStressTestDialog = true }
+          )
+
+          HorizontalDivider(color = SpotifyDivider)
+
+          NotificationDebugCard(modifier = Modifier.padding(top = 4.dp))
+        }
       }
       
       if (showStressTestDialog) {
@@ -258,304 +304,254 @@ fun SettingsScreen(
 
     // AI & API Keys Section
     item {
-      SectionTitle("AI & METADATA APIS")
-      Box(
-        modifier = Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(12.dp))
-          .background(SpotifyCardElevated)
-          .padding(16.dp)
-      ) {
-        Column {
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = null, tint = SpotifyGreen)
-            Spacer(modifier = Modifier.width(10.dp))
-            Text("AI Metadata Resolution & LRCLIB", color = SpotifyWhite, fontWeight = FontWeight.Bold)
-          }
+      SettingsSection("AI & METADATA APIS")
+      SettingsCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = null, tint = SpotifyGreen)
+          Spacer(modifier = Modifier.width(10.dp))
+          Text("AI Metadata Resolution & LRCLIB", color = SpotifyWhite, fontWeight = FontWeight.Bold)
+        }
 
-          Spacer(modifier = Modifier.height(8.dp))
-          Text(
-            text = "LRCLIB & iTunes APIs are integrated out-of-the-box (no key needed). Once synced lyrics or 4K covers are downloaded, they are permanently cached for 100% offline playback.",
-            color = SpotifyTextSecondary,
-            fontSize = 12.sp,
-            lineHeight = 18.sp
-          )
+        Text(
+          text = "LRCLIB & iTunes APIs are integrated out-of-the-box (no key needed). Once synced lyrics or 4K covers are downloaded, they are permanently cached for 100% offline playback.",
+          color = SpotifyTextSecondary,
+          fontSize = 12.sp,
+          lineHeight = 18.sp
+        )
 
-          Spacer(modifier = Modifier.height(12.dp))
-          Text(
-            text = "OpenAI API Key (Optional)",
-            color = SpotifyWhite,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold
-          )
-          Spacer(modifier = Modifier.height(2.dp))
-          Text(
-            text = "Get a key at platform.openai.com > API keys. A ChatGPT Plus subscription is not an API key; API usage is billed separately.",
-            color = SpotifyTextSecondary,
-            fontSize = 11.sp,
-            lineHeight = 16.sp
-          )
-          Spacer(modifier = Modifier.height(6.dp))
+        Text(
+          text = "OpenAI API Key (Optional)",
+          color = SpotifyWhite,
+          fontSize = 13.sp,
+          fontWeight = FontWeight.SemiBold
+        )
+        Text(
+          text = "Get a key at platform.openai.com > API keys. A ChatGPT Plus subscription is not an API key; API usage is billed separately.",
+          color = SpotifyTextSecondary,
+          fontSize = 11.sp,
+          lineHeight = 16.sp
+        )
+        OutlinedTextField(
+          value = openAiApiKey,
+          onValueChange = {
+            openAiApiKey = it
+            prefs.edit().putString("openai_api_key", it).apply()
+          },
+          placeholder = { Text("sk-...", fontSize = 12.sp) },
+          singleLine = true,
+          visualTransformation = if (isKeyVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+          trailingIcon = {
+            IconButton(onClick = { isKeyVisible = !isKeyVisible }) {
+              Text(if (isKeyVisible) "Hide" else "Show", color = SpotifyGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+          },
+          modifier = Modifier.fillMaxWidth()
+        )
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
           OutlinedTextField(
-            value = openAiApiKey,
+            value = openAiChatModel,
             onValueChange = {
-              openAiApiKey = it
-              prefs.edit().putString("openai_api_key", it).apply()
+              openAiChatModel = it
+              prefs.edit().putString("openai_chat_model", it).apply()
             },
-            placeholder = { Text("sk-...", fontSize = 12.sp) },
+            label = { Text("Chat model", fontSize = 11.sp) },
             singleLine = true,
-            visualTransformation = if (isKeyVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
-            trailingIcon = {
-              IconButton(onClick = { isKeyVisible = !isKeyVisible }) {
-                Text(if (isKeyVisible) "Hide" else "Show", color = SpotifyGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            modifier = Modifier.weight(1f)
+          )
+
+          OutlinedTextField(
+            value = openAiTranscriptionModel,
+            onValueChange = {
+              openAiTranscriptionModel = it
+              prefs.edit().putString("openai_transcription_model", it).apply()
+            },
+            label = { Text("Transcription model", fontSize = 11.sp) },
+            singleLine = true,
+            modifier = Modifier.weight(1f)
+          )
+        }
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Auto AI lyrics (default OFF)", color = SpotifyWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text("Automatically use OpenAI as last lyrics fallback", color = SpotifyTextSecondary, fontSize = 11.sp)
+          }
+          Spacer(modifier = Modifier.width(8.dp))
+          Switch(
+            checked = autoAiLyrics,
+            onCheckedChange = {
+              autoAiLyrics = it
+              prefs.edit().putBoolean("auto_ai_lyrics", it).apply()
+            },
+            colors = SwitchDefaults.colors(
+              checkedThumbColor = SpotifyWhite,
+              checkedTrackColor = SpotifyGreen,
+              uncheckedThumbColor = SpotifyTextSecondary,
+              uncheckedTrackColor = SpotifyDivider
+            )
+          )
+        }
+
+        Text(
+          text = "Notice: Audio files and lyrics prompts are sent to OpenAI when AI metadata cleanup or AI lyrics generation/sync features are used.",
+          color = SpotifyTextSecondary,
+          fontSize = 11.sp,
+          lineHeight = 15.sp
+        )
+
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        var isTestingKey by remember { mutableStateOf(false) }
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.End,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          if (isTestingKey) {
+            androidx.compose.material3.CircularProgressIndicator(
+              modifier = Modifier.size(20.dp),
+              color = SpotifyGreen,
+              strokeWidth = 2.dp
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+          }
+          Button(
+            onClick = {
+              if (openAiApiKey.isBlank()) {
+                keyTestStatus = "No key entered. Please enter a valid OpenAI API key."
+                return@Button
+              }
+              isTestingKey = true
+              keyTestStatus = "Connecting to OpenAI API..."
+              scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                  val openAiSource = com.example.data.lyrics.sources.OpenAILyricsSource(context)
+                  val result = openAiSource.testApiKey(openAiApiKey)
+                  isTestingKey = false
+                  keyTestStatus = result.second
+                } catch (e: Exception) {
+                  isTestingKey = false
+                  keyTestStatus = "✗ Connection failed: ${e.message}"
+                }
               }
             },
-            modifier = Modifier.fillMaxWidth()
-          )
-
-          Spacer(modifier = Modifier.height(10.dp))
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            colors = ButtonDefaults.buttonColors(containerColor = SpotifyDivider),
+            enabled = !isTestingKey
           ) {
-            OutlinedTextField(
-              value = openAiChatModel,
-              onValueChange = {
-                openAiChatModel = it
-                prefs.edit().putString("openai_chat_model", it).apply()
-              },
-              label = { Text("Chat model", fontSize = 11.sp) },
-              singleLine = true,
-              modifier = Modifier.weight(1f)
-            )
-
-            OutlinedTextField(
-              value = openAiTranscriptionModel,
-              onValueChange = {
-                openAiTranscriptionModel = it
-                prefs.edit().putString("openai_transcription_model", it).apply()
-              },
-              label = { Text("Transcription model", fontSize = 11.sp) },
-              singleLine = true,
-              modifier = Modifier.weight(1f)
-            )
-          }
-
-          Spacer(modifier = Modifier.height(10.dp))
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Column(modifier = Modifier.weight(1f)) {
-              Text("Auto AI lyrics (default OFF)", color = SpotifyWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-              Text("Automatically use OpenAI as last lyrics fallback", color = SpotifyTextSecondary, fontSize = 11.sp)
-            }
-            Switch(
-              checked = autoAiLyrics,
-              onCheckedChange = {
-                autoAiLyrics = it
-                prefs.edit().putBoolean("auto_ai_lyrics", it).apply()
-              },
-              colors = SwitchDefaults.colors(
-                checkedThumbColor = SpotifyWhite,
-                checkedTrackColor = SpotifyGreen,
-                uncheckedThumbColor = SpotifyTextSecondary,
-                uncheckedTrackColor = SpotifyDivider
-              )
-            )
-          }
-
-          Spacer(modifier = Modifier.height(8.dp))
-          Text(
-            text = "Notice: Audio files and lyrics prompts are sent to OpenAI when AI metadata cleanup or AI lyrics generation/sync features are used.",
-            color = SpotifyTextSecondary,
-            fontSize = 11.sp,
-            lineHeight = 15.sp
-          )
-
-          val scope = androidx.compose.runtime.rememberCoroutineScope()
-          var isTestingKey by remember { mutableStateOf(false) }
-
-          Spacer(modifier = Modifier.height(10.dp))
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            if (isTestingKey) {
-              androidx.compose.material3.CircularProgressIndicator(
-                modifier = Modifier.size(20.dp),
-                color = SpotifyGreen,
-                strokeWidth = 2.dp
-              )
-              Spacer(modifier = Modifier.width(8.dp))
-            }
-            Button(
-              onClick = {
-                if (openAiApiKey.isBlank()) {
-                  keyTestStatus = "No key entered. Please enter a valid OpenAI API key."
-                  return@Button
-                }
-                isTestingKey = true
-                keyTestStatus = "Connecting to OpenAI API..."
-                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                  try {
-                    val openAiSource = com.example.data.lyrics.sources.OpenAILyricsSource(context)
-                    val result = openAiSource.testApiKey(openAiApiKey)
-                    isTestingKey = false
-                    keyTestStatus = result.second
-                  } catch (e: Exception) {
-                    isTestingKey = false
-                    keyTestStatus = "✗ Connection failed: ${e.message}"
-                  }
-                }
-              },
-              colors = ButtonDefaults.buttonColors(containerColor = SpotifyDivider),
-              enabled = !isTestingKey
-            ) {
-              Text("Test Connection", color = SpotifyWhite, fontSize = 12.sp)
-            }
-          }
-
-          if (keyTestStatus != null) {
-            Text(
-              text = keyTestStatus!!,
-              color = if (keyTestStatus!!.startsWith("✓")) SpotifyGreen else Color(0xFFFF5252),
-              fontSize = 12.sp,
-              fontWeight = FontWeight.Medium,
-              modifier = Modifier.padding(top = 4.dp)
-            )
-          }
-
-          Spacer(modifier = Modifier.height(14.dp))
-          HorizontalDivider(color = SpotifyDivider)
-          Spacer(modifier = Modifier.height(10.dp))
-
-          // Lyrics Debug Panel button
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .clickable(onClick = onOpenLyricsDebug)
-              .padding(vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = null, tint = SpotifyGreen)
-              Spacer(modifier = Modifier.width(10.dp))
-              Text("Lyrics Pipeline Debug Panel", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            }
-            Text("Open Debug >", color = SpotifyGreen, fontSize = 13.sp)
+            Text("Test Connection", color = SpotifyWhite, fontSize = 12.sp)
           }
         }
+
+        if (keyTestStatus != null) {
+          Text(
+            text = keyTestStatus!!,
+            color = if (keyTestStatus!!.startsWith("✓")) SpotifyGreen else Color(0xFFFF5252),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(top = 4.dp)
+          )
+        }
+
+        HorizontalDivider(color = SpotifyDivider)
+
+        SettingsRow(
+          icon = Icons.Default.AutoAwesome,
+          title = "Lyrics Pipeline Debug Panel",
+          subtitle = "View live search trace & sources",
+          trailing = "Open Debug >",
+          onClick = onOpenLyricsDebug
+        )
       }
     }
 
     // Audio & Playback Preferences
     item {
-      SectionTitle("AUDIO & PLAYBACK")
-      Box(
-        modifier = Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(12.dp))
-          .background(SpotifyCardElevated)
-          .padding(16.dp)
-      ) {
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-          SettingToggleRow(
-            title = "Auto-fetch Synced Lyrics",
-            subtitle = "Download LRC timestamps via LRCLIB for offline use",
-            checked = autoFetchLyrics,
-            onCheckedChange = { autoFetchLyrics = it }
-          )
+      SettingsSection("AUDIO & PLAYBACK")
+      SettingsCard {
+        SettingToggleRow(
+          title = "Auto-fetch Synced Lyrics",
+          subtitle = "Download LRC timestamps via LRCLIB for offline use",
+          checked = autoFetchLyrics,
+          onCheckedChange = { autoFetchLyrics = it }
+        )
 
-          SettingToggleRow(
-            title = "Auto-fetch 4K Album Covers",
-            subtitle = "Download high-res artwork from iTunes CDN",
-            checked = autoFetchCovers,
-            onCheckedChange = { autoFetchCovers = it }
-          )
+        SettingToggleRow(
+          title = "Auto-fetch 4K Album Covers",
+          subtitle = "Download high-res artwork from iTunes CDN",
+          checked = autoFetchCovers,
+          onCheckedChange = { autoFetchCovers = it }
+        )
 
-          SettingToggleRow(
-            title = "Crossfade",
-            subtitle = "Smooth gapless transition between audio tracks",
-            checked = crossfadeEnabled,
-            onCheckedChange = { crossfadeEnabled = it }
-          )
+        SettingToggleRow(
+          title = "Crossfade",
+          subtitle = "Smooth gapless transition between audio tracks",
+          checked = crossfadeEnabled,
+          onCheckedChange = { crossfadeEnabled = it }
+        )
 
-          HorizontalDivider(color = SpotifyDivider)
+        HorizontalDivider(color = SpotifyDivider)
 
-          // Ignore Audio Shorter Than Selector
-          val playbackPrefs = remember { context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE) }
-          var minDurationSec by remember { mutableStateOf(playbackPrefs.getInt("min_audio_duration_sec", 30)) }
+        // Ignore Audio Shorter Than Selector
+        val playbackPrefs = remember { context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE) }
+        var minDurationSec by remember { mutableStateOf(playbackPrefs.getInt("min_audio_duration_sec", 30)) }
 
-          Column(modifier = Modifier.fillMaxWidth()) {
-            Text("Ignore audio shorter than", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            Text("Filter out voice notes, ringtones & short clips", color = SpotifyTextSecondary, fontSize = 11.sp)
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-              listOf(0 to "Off", 15 to "15 s", 30 to "30 s", 60 to "60 s").forEach { (sec, label) ->
-                val isSelected = minDurationSec == sec
-                Button(
-                  onClick = {
-                    minDurationSec = sec
-                    playbackPrefs.edit().putInt("min_audio_duration_sec", sec).apply()
-                  },
-                  colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isSelected) SpotifyGreen else SpotifyDivider,
-                    contentColor = if (isSelected) SpotifyBlack else SpotifyWhite
-                  ),
-                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                  modifier = Modifier
-                    .weight(1f)
-                    .height(32.dp)
-                ) {
-                  Text(label, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
-                }
+        Column(modifier = Modifier.fillMaxWidth()) {
+          Text("Ignore audio shorter than", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+          Text("Filter out voice notes, ringtones & short clips", color = SpotifyTextSecondary, fontSize = 11.sp)
+          Spacer(modifier = Modifier.height(8.dp))
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+          ) {
+            listOf(0 to "Off", 15 to "15 s", 30 to "30 s", 60 to "60 s").forEach { (sec, label) ->
+              val isSelected = minDurationSec == sec
+              Button(
+                onClick = {
+                  minDurationSec = sec
+                  playbackPrefs.edit().putInt("min_audio_duration_sec", sec).apply()
+                },
+                colors = ButtonDefaults.buttonColors(
+                  containerColor = if (isSelected) SpotifyGreen else SpotifyDivider,
+                  contentColor = if (isSelected) SpotifyBlack else SpotifyWhite
+                ),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                modifier = Modifier
+                  .weight(1f)
+                  .height(32.dp)
+              ) {
+                Text(label, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
               }
             }
           }
-
-          HorizontalDivider(color = SpotifyDivider)
-
-          // Equalizer Shortcut
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .clickable(onClick = onOpenEqualizer)
-              .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              Icon(imageVector = Icons.Default.Equalizer, contentDescription = null, tint = SpotifyWhite)
-              Spacer(modifier = Modifier.width(10.dp))
-              Text("Equalizer & Presets", color = SpotifyWhite, fontSize = 14.sp)
-            }
-            Text("Adjust >", color = SpotifyGreen, fontSize = 13.sp)
-          }
-
-          // Sleep Timer Shortcut
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .clickable(onClick = onOpenSleepTimer)
-              .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              Icon(imageVector = Icons.Default.Timer, contentDescription = null, tint = SpotifyWhite)
-              Spacer(modifier = Modifier.width(10.dp))
-              Text("Sleep Timer", color = SpotifyWhite, fontSize = 14.sp)
-            }
-            Text("Set >", color = SpotifyGreen, fontSize = 13.sp)
-          }
         }
+
+        HorizontalDivider(color = SpotifyDivider)
+
+        SettingsRow(
+          icon = Icons.Default.Equalizer,
+          title = "Equalizer & Presets",
+          subtitle = "Sound profiles & frequency bands",
+          trailing = "Adjust >",
+          onClick = onOpenEqualizer
+        )
+
+        HorizontalDivider(color = SpotifyDivider)
+
+        SettingsRow(
+          icon = Icons.Default.Timer,
+          title = "Sleep Timer",
+          subtitle = "Stop playback automatically",
+          trailing = "Set >",
+          onClick = onOpenSleepTimer
+        )
       }
     }
 
@@ -679,10 +675,19 @@ fun CrashLogsDialog(onDismiss: () -> Unit) {
                     Text(
                       text = "$dateStr • ${file.length()} bytes",
                       color = SpotifyTextSecondary,
-                      fontSize = 11.sp
+                      fontSize = 11.sp,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis
                     )
                   }
-                  Text("View >", color = SpotifyGreen, fontSize = 12.sp)
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Text(
+                    text = "View >",
+                    color = SpotifyGreen,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    softWrap = false
+                  )
                 }
               }
             }
@@ -706,7 +711,7 @@ fun CrashLogsDialog(onDismiss: () -> Unit) {
           ) {
             Icon(imageVector = Icons.Default.Share, contentDescription = null, tint = SpotifyBlack, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(4.dp))
-            Text("Share", color = SpotifyBlack, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Text("Share", color = SpotifyBlack, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, softWrap = false)
           }
           OutlinedButton(
             onClick = {
@@ -714,7 +719,7 @@ fun CrashLogsDialog(onDismiss: () -> Unit) {
               selectedFileContent = null
             }
           ) {
-            Text("Back", color = SpotifyWhite, fontSize = 12.sp)
+            Text("Back", color = SpotifyWhite, fontSize = 12.sp, maxLines = 1, softWrap = false)
           }
         }
       } else {
@@ -729,14 +734,14 @@ fun CrashLogsDialog(onDismiss: () -> Unit) {
           ) {
             Icon(imageVector = Icons.Default.Delete, contentDescription = null, tint = SpotifyWhite, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(4.dp))
-            Text("Clear All", color = SpotifyWhite, fontSize = 12.sp)
+            Text("Clear All", color = SpotifyWhite, fontSize = 12.sp, maxLines = 1, softWrap = false)
           }
         }
       }
     },
     dismissButton = {
       TextButton(onClick = onDismiss) {
-        Text("Close", color = SpotifyWhite)
+        Text("Close", color = SpotifyWhite, maxLines = 1, softWrap = false)
       }
     },
     containerColor = SpotifyCardElevated
@@ -757,8 +762,16 @@ fun HiddenSongsDialog(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
       ) {
-        Text("Hidden Songs (${hiddenSongs.size})", color = SpotifyWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        IconButton(onClick = onDismiss) {
+        Text(
+          text = "Hidden Songs (${hiddenSongs.size})",
+          color = SpotifyWhite,
+          fontSize = 16.sp,
+          fontWeight = FontWeight.Bold,
+          modifier = Modifier.weight(1f),
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+        )
+        IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
           Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = SpotifyWhite)
         }
       }
@@ -806,13 +819,14 @@ fun HiddenSongsDialog(
                   )
                 }
 
+                Spacer(modifier = Modifier.width(8.dp))
                 Button(
                   onClick = { onRestoreSong(song.id) },
                   colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
                   contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                   modifier = Modifier.height(32.dp)
                 ) {
-                  Text("Restore", color = SpotifyBlack, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                  Text("Restore", color = SpotifyBlack, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                 }
               }
             }
@@ -831,14 +845,7 @@ fun HiddenSongsDialog(
 
 @Composable
 private fun SectionTitle(title: String) {
-  Text(
-    text = title,
-    color = SpotifyTextSecondary,
-    fontSize = 11.sp,
-    fontWeight = FontWeight.Bold,
-    letterSpacing = 1.sp,
-    modifier = Modifier.padding(start = 4.dp, top = 24.dp, bottom = 8.dp)
-  )
+  SettingsSection(title)
 }
 
 @Composable
@@ -849,13 +856,28 @@ private fun SettingToggleRow(
   onCheckedChange: (Boolean) -> Unit
 ) {
   Row(
-    modifier = Modifier.fillMaxWidth(),
-    horizontalArrangement = Arrangement.SpaceBetween,
+    modifier = Modifier
+      .fillMaxWidth()
+      .heightIn(min = 48.dp)
+      .padding(vertical = 4.dp),
     verticalAlignment = Alignment.CenterVertically
   ) {
     Column(modifier = Modifier.weight(1f)) {
-      Text(text = title, color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-      Text(text = subtitle, color = SpotifyTextSecondary, fontSize = 11.sp)
+      Text(
+        text = title,
+        color = SpotifyWhite,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Medium,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
+      Text(
+        text = subtitle,
+        color = SpotifyTextSecondary,
+        fontSize = 11.sp,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
+      )
     }
     Spacer(modifier = Modifier.width(8.dp))
     Switch(
@@ -913,26 +935,33 @@ fun NotificationDebugCard(modifier: Modifier = Modifier) {
       .fillMaxWidth()
       .clip(RoundedCornerShape(12.dp))
       .background(SpotifyCardElevated)
-      .padding(16.dp),
+      .padding(horizontal = 16.dp, vertical = 12.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp)
   ) {
     Row(
       modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically
     ) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(imageVector = Icons.Default.Notifications, contentDescription = null, tint = SpotifyGreen)
+      Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+        Icon(imageVector = Icons.Default.Notifications, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(24.dp))
         Spacer(modifier = Modifier.width(10.dp))
-        Text("Notification Debug", color = SpotifyWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+          text = "Notification Debug",
+          color = SpotifyWhite,
+          fontSize = 14.sp,
+          fontWeight = FontWeight.SemiBold,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+        )
       }
+      Spacer(modifier = Modifier.width(8.dp))
       Button(
         onClick = { queryStatus() },
         colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
         modifier = Modifier.height(32.dp)
       ) {
-        Text("Check now", color = SpotifyBlack, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text("Check now", color = SpotifyBlack, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
       }
     }
 
@@ -947,12 +976,29 @@ fun NotificationDebugCard(modifier: Modifier = Modifier) {
 @Composable
 fun DebugRow(label: String, value: String, valueColor: Color) {
   Row(
-    modifier = Modifier.fillMaxWidth(),
-    horizontalArrangement = Arrangement.SpaceBetween,
+    modifier = Modifier
+      .fillMaxWidth()
+      .heightIn(min = 28.dp),
     verticalAlignment = Alignment.CenterVertically
   ) {
-    Text(label, color = SpotifyTextSecondary, fontSize = 12.sp)
-    Text(value, color = valueColor, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    Text(
+      text = label,
+      color = SpotifyTextSecondary,
+      fontSize = 12.sp,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.weight(1f)
+    )
+    Spacer(modifier = Modifier.width(8.dp))
+    Text(
+      text = value,
+      color = valueColor,
+      fontSize = 12.sp,
+      fontWeight = FontWeight.Medium,
+      maxLines = 1,
+      softWrap = false,
+      overflow = TextOverflow.Ellipsis
+    )
   }
 }
 

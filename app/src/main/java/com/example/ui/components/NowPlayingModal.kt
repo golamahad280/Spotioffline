@@ -160,7 +160,9 @@ fun NowPlayingModal(
         ) {
           IconButton(
             onClick = onDismiss,
-            modifier = Modifier.testTag("now_playing_close")
+            modifier = Modifier
+              .size(48.dp)
+              .testTag("now_playing_close")
           ) {
             Icon(
               imageVector = Icons.Default.KeyboardArrowDown,
@@ -170,13 +172,20 @@ fun NowPlayingModal(
             )
           }
 
-          Column(horizontalAlignment = Alignment.CenterHorizontally) {
+          Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+              .weight(1f)
+              .padding(horizontal = 8.dp)
+          ) {
             Text(
               text = "PLAYING FROM PLAYLIST",
               color = SpotifyTextSecondary,
               fontSize = 11.sp,
               fontWeight = FontWeight.Bold,
-              letterSpacing = 1.sp
+              letterSpacing = 1.sp,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
             )
             Text(
               text = song.album.ifBlank { "Your Library" },
@@ -191,7 +200,9 @@ fun NowPlayingModal(
           Box {
             IconButton(
               onClick = { showMenu = true },
-              modifier = Modifier.testTag("now_playing_menu")
+              modifier = Modifier
+                .size(48.dp)
+                .testTag("now_playing_menu")
             ) {
               Icon(
                 imageVector = Icons.Default.MoreVert,
@@ -286,9 +297,13 @@ fun NowPlayingModal(
             )
           }
 
+          Spacer(modifier = Modifier.width(8.dp))
+
           IconButton(
             onClick = { onToggleLike(song) },
-            modifier = Modifier.testTag("now_playing_like")
+            modifier = Modifier
+              .size(48.dp)
+              .testTag("now_playing_like")
           ) {
             Icon(
               imageVector = if (song.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
